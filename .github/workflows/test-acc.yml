@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.25.11"
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.9.*"
@@ -58,3 +58,124 @@ jobs:
           FREEIPA_USERNAME: "admin"
           FREEIPA_PASSWORD: "P@ssword"
         timeout-minutes: 30
+
+  security-acceptance:
+    name: Kerberos and Write-Only Acceptance Tests
+    runs-on: ubuntu-latest
+    services:
+      ipa:
+        image: freeipa/freeipa-server:fedora-44-4.13.2
+        options: "--hostname ipa.ipatest.lan --privileged --sysctl net.ipv6.conf.all.disable_ipv6=0 --sysctl net.ipv6.conf.lo.disable_ipv6=0 --cap-add=NET_ADMIN"
+        ports:
+          - "80:80"
+          - "443:443"
+          - "88:88"
+        env:
+          container: "docker"
+          IPA_SERVER_HOSTNAME: "ipa.ipatest.lan"
+          IPA_SERVER_INSTALL_OPTS: "--no-ntp --ds-password=P@ssword --admin-password=P@ssword --domain=ipatest.lan --realm=IPATEST.LAN --no-forwarders --setup-dns --no-dnssec-validation --allow-zone-overlap --no-reverse --unattended"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.11"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.12.*"
+          terraform_wrapper: false
+      - name: Add ipa container to /etc/hosts
+        run: |
+          ipa_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${{ job.services.ipa.id }}")
+          test -n "$ipa_ip"
+          echo "$ipa_ip ipa.ipatest.lan" | sudo tee -a /etc/hosts
+      - name: Wait for FreeIPA Server
+        run: |
+          docker logs "${{ job.services.ipa.id }}"
+          echo "Waiting for FreeIPA Server to initialize"
+          while [ "$(docker logs --tail 1 ${{ job.services.ipa.id }})" != "FreeIPA server configured." ]; do
+            docker logs --tail 1 "${{ job.services.ipa.id }}"
+            echo "FreeIPA server not ready. Waiting another 30s."
+            sleep 30
+          done
+      - name: Create Kerberos acceptance identity
+        run: |
+          container_id="${{ job.services.ipa.id }}"
+          docker exec "$container_id" bash -lc '
+            printf "%s\n" "P@ssword" | kinit admin
+            ipa user-add tf-provider-accept --first=Terraform --last=Provider
+            ipa group-add-member admins --users=tf-provider-accept
+            ipa-getkeytab -s ipa.ipatest.lan -p tf-provider-accept@IPATEST.LAN -k /tmp/tf-provider-accept.keytab
+            chmod 600 /tmp/tf-provider-accept.keytab
+            kdestroy
+          '
+          docker cp "$container_id:/tmp/tf-provider-accept.keytab" /tmp/tf-provider-accept.keytab
+          sudo chown "$(id -u):$(id -g)" /tmp/tf-provider-accept.keytab
+          chmod 600 /tmp/tf-provider-accept.keytab
+          cat > /tmp/biptec-krb5.conf <<'EOF'
+          [libdefaults]
+            default_realm = IPATEST.LAN
+            dns_lookup_realm = false
+            dns_lookup_kdc = false
+            rdns = false
+            forwardable = true
+            udp_preference_limit = 1
+
+          [realms]
+            IPATEST.LAN = {
+              kdc = ipa.ipatest.lan:88
+            }
+
+          [domain_realm]
+            .ipatest.lan = IPATEST.LAN
+            ipatest.lan = IPATEST.LAN
+          EOF
+          chmod 600 /tmp/biptec-krb5.conf
+          echo "TF_ACC_TERRAFORM_PATH=$(command -v terraform)" >> "$GITHUB_ENV"
+      - name: Verify Kerberos and SPNEGO from runner
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          KRB5_CONFIG: /tmp/biptec-krb5.conf
+          KRB5CCNAME: FILE:/tmp/biptec-ci.ccache
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq krb5-user
+          kinit -V -kt /tmp/tf-provider-accept.keytab tf-provider-accept@IPATEST.LAN
+          klist -f | grep -E 'Flags:.*F'
+          kvno HTTP/ipa.ipatest.lan@IPATEST.LAN
+          klist
+          if curl --version | grep -q SPNEGO; then
+            rm -f /tmp/ipa.cookies
+            curl --fail-with-body --silent --show-error --negotiate -u : -k \
+              -H 'Referer: https://ipa.ipatest.lan/ipa' \
+              -c /tmp/ipa.cookies -b /tmp/ipa.cookies \
+              -X POST https://ipa.ipatest.lan/ipa/session/login_kerberos >/tmp/ipa-login.body
+            grep -q ipa_session /tmp/ipa.cookies
+            echo "SPNEGO_SESSION=PASS"
+          else
+            echo "SPNEGO_SESSION=SKIPPED_CURL_WITHOUT_SPNEGO"
+          fi
+          kdestroy
+      - name: Run Kerberos and write-only acceptance tests
+        run: go test -v -count=1 -run '^TestAccBIPTEC' ./freeipa/
+        env:
+          TF_ACC: "1"
+          FREEIPA_HOST: "ipa.ipatest.lan"
+          FREEIPA_USERNAME: "admin"
+          FREEIPA_PASSWORD: "P@ssword"
+          FREEIPA_KERBEROS_PRINCIPAL: "tf-provider-accept@IPATEST.LAN"
+          FREEIPA_KERBEROS_REALM: "IPATEST.LAN"
+          FREEIPA_KRB5_CONF: "/tmp/biptec-krb5.conf"
+          FREEIPA_KEYTAB: "/tmp/tf-provider-accept.keytab"
+          FREEIPA_TEST_ZONE: "ipatest.lan."
+        timeout-minutes: 30
+      - name: Show Kerberos diagnostics on failure
+        if: failure()
+        run: |
+          container_id="${{ job.services.ipa.id }}"
+          echo "--- HTTP error log ---"
+          docker exec "$container_id" bash -lc 'tail -200 /var/log/httpd/error_log 2>/dev/null || true'
+          echo "--- HTTP access log ---"
+          docker exec "$container_id" bash -lc 'tail -100 /var/log/httpd/access_log 2>/dev/null || true'
+          echo "--- KDC log ---"
+          docker exec "$container_id" bash -lc 'tail -200 /var/log/krb5kdc.log 2>/dev/null || true'
