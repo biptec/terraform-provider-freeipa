@@ -18,6 +18,23 @@ resource "freeipa_host" "host-1" {
   description   = "FreeIPA client in example.test domain"
   mac_addresses = ["00:00:00:AA:AA:AA", "00:00:00:BB:BB:BB"]
 }
+
+# Terraform/OpenTofu 1.11+ only. The enrollment password is caller-supplied,
+# sensitive, ephemeral, and never persisted in state by the provider.
+variable "freeipa_enrollment_password" {
+  type      = string
+  sensitive = true
+  ephemeral = true
+  default   = null
+}
+
+resource "freeipa_host" "bulk-enrollment" {
+  name                    = "host-2.example.test"
+  ip_address              = "192.168.1.66"
+  force                   = true
+  userpassword_wo         = var.freeipa_enrollment_password
+  userpassword_wo_version = 1
+}
 ```
 
 
@@ -50,6 +67,8 @@ resource "freeipa_host" "testhost" {
 
 ### Optional
 
+> **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
+
 - `assigned_idview` (String) Assigned ID View
 - `description` (String) A description of this host
 - `force` (Boolean) Skip host's DNS check (A/AAAA) before adding it
@@ -62,15 +81,17 @@ resource "freeipa_host" "testhost" {
 - `mac_addresses` (List of String) Hardware MAC address(es) on this host
 - `operating_system` (String) Host operating system and version (e.g. 'Fedora 40')
 - `platform` (String) Host hardware platform (e.g. 'Lenovo T61')
-- `random_password` (Boolean) Generate a random password to be used in bulk enrollment
+- `random_password` (Boolean) Legacy option that asks FreeIPA to generate a random bulk-enrollment password. The generated value is stateful; prefer caller-supplied `userpassword_wo` for external two-stage enrollment workflows.
 - `trusted_for_delegation` (Boolean) Client credentials may be delegated to the service
 - `trusted_to_auth_as_delegate` (Boolean) The service is allowed to authenticate on behalf of a client
 - `update_dns` (Boolean) Update DNS when updating or deleting the host (default to `true`)
 - `user_certificates` (List of String) Base-64 encoded host certificate
 - `userclass` (List of String) Host category (semantics placed on this attribute are for local interpretation)
-- `userpassword` (String, Sensitive) Password used in bulk enrollment
+- `userpassword` (String, Sensitive) Legacy password used in bulk enrollment. This value is stored in Terraform/OpenTofu state; prefer `userpassword_wo` for automation.
+- `userpassword_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Caller-supplied one-time password used only when creating the FreeIPA host for bulk enrollment. The value is write-only and is never persisted in Terraform/OpenTofu plan or state artifacts. Requires Terraform/OpenTofu 1.11 or later.
+- `userpassword_wo_version` (Number) Persistent rotation trigger for `userpassword_wo`. Increment this value when setting a new caller-supplied enrollment password on an existing host. Changing the version without supplying `userpassword_wo` fails; the host is never recreated implicitly for OTP rotation.
 
 ### Read-Only
 
-- `generated_password` (String, Sensitive) Generated random password created at host creation
+- `generated_password` (String, Sensitive) Legacy generated random password created at host creation
 - `id` (String) ID of the resource

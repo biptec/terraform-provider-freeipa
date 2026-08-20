@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -37,6 +38,7 @@ import (
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &HostResource{}
 var _ resource.ResourceWithImportState = &HostResource{}
+var _ resource.ResourceWithModifyPlan = &HostResource{}
 
 func NewHostResource() resource.Resource {
 	return &HostResource{}
@@ -68,9 +70,38 @@ type HostResourceModel struct {
 	TrustedToAuthAsDelegate types.Bool   `tfsdk:"trusted_to_auth_as_delegate"`
 	Force                   types.Bool   `tfsdk:"force"`
 	UserPassword            types.String `tfsdk:"userpassword"`
+	UserPasswordWO          types.String `tfsdk:"userpassword_wo"`
+	UserPasswordWOVersion   types.Int64  `tfsdk:"userpassword_wo_version"`
 	RandomPassword          types.Bool   `tfsdk:"random_password"`
 	GeneratedPassword       types.String `tfsdk:"generated_password"`
 	UpdateDns               types.Bool   `tfsdk:"update_dns"`
+}
+
+func validateHostEnrollmentPasswordCreate(secret types.String, version types.Int64) error {
+	if secret.IsNull() {
+		if !version.IsNull() {
+			return fmt.Errorf("userpassword_wo_version is meaningful only with userpassword_wo when creating a host")
+		}
+		return nil
+	}
+	if secret.ValueString() == "" {
+		return fmt.Errorf("userpassword_wo must not be empty when supplied")
+	}
+	if version.IsNull() {
+		return fmt.Errorf("userpassword_wo_version must be set when userpassword_wo is supplied")
+	}
+	return nil
+}
+
+func hostEnrollmentPasswordRotation(secret types.String, plannedVersion, priorVersion types.Int64) (*string, error) {
+	if plannedVersion.Equal(priorVersion) {
+		return nil, nil
+	}
+	if secret.IsNull() || secret.ValueString() == "" {
+		return nil, fmt.Errorf("userpassword_wo_version changed, but no non-empty userpassword_wo was supplied")
+	}
+	password := secret.ValueString()
+	return &password, nil
 }
 
 func (r *HostResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -78,7 +109,16 @@ func (r *HostResource) Metadata(ctx context.Context, req resource.MetadataReques
 }
 
 func (r *HostResource) ConfigValidators(ctx context.Context) []resource.ConfigValidator {
-	return []resource.ConfigValidator{}
+	return []resource.ConfigValidator{
+		resourcevalidator.Conflicting(
+			path.MatchRoot("userpassword_wo"),
+			path.MatchRoot("userpassword"),
+		),
+		resourcevalidator.Conflicting(
+			path.MatchRoot("userpassword_wo"),
+			path.MatchRoot("random_password"),
+		),
+	}
 }
 
 func (r *HostResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
@@ -171,16 +211,26 @@ func (r *HostResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Optional:            true,
 			},
 			"userpassword": schema.StringAttribute{
-				MarkdownDescription: "Password used in bulk enrollment",
+				MarkdownDescription: "Legacy password used in bulk enrollment. This value is stored in Terraform/OpenTofu state; prefer `userpassword_wo` for automation.",
 				Optional:            true,
 				Sensitive:           true,
 			},
+			"userpassword_wo": schema.StringAttribute{
+				MarkdownDescription: "Caller-supplied one-time password used only when creating the FreeIPA host for bulk enrollment. The value is write-only and is never persisted in Terraform/OpenTofu plan or state artifacts. Requires Terraform/OpenTofu 1.11 or later.",
+				Optional:            true,
+				Sensitive:           true,
+				WriteOnly:           true,
+			},
+			"userpassword_wo_version": schema.Int64Attribute{
+				MarkdownDescription: "Persistent rotation trigger for `userpassword_wo`. Increment this value when setting a new caller-supplied enrollment password on an existing host. Changing the version without supplying `userpassword_wo` fails; the host is never recreated implicitly for OTP rotation.",
+				Optional:            true,
+			},
 			"random_password": schema.BoolAttribute{
-				MarkdownDescription: "Generate a random password to be used in bulk enrollment",
+				MarkdownDescription: "Legacy option that asks FreeIPA to generate a random bulk-enrollment password. The generated value is stateful; prefer caller-supplied `userpassword_wo` for external two-stage enrollment workflows.",
 				Optional:            true,
 			},
 			"generated_password": schema.StringAttribute{
-				MarkdownDescription: "Generated random password created at host creation",
+				MarkdownDescription: "Legacy generated random password created at host creation",
 				Computed:            true,
 				Sensitive:           true,
 			},
@@ -191,6 +241,36 @@ func (r *HostResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Default:             booldefault.StaticBool(true),
 			},
 		},
+	}
+}
+
+func (r *HostResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+
+	var plan, config HostResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if req.State.Raw.IsNull() {
+		if err := validateHostEnrollmentPasswordCreate(config.UserPasswordWO, plan.UserPasswordWOVersion); err != nil {
+			resp.Diagnostics.AddError("Invalid Host Enrollment Password Configuration", err.Error())
+		}
+		return
+	}
+
+	var state HostResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if _, err := hostEnrollmentPasswordRotation(config.UserPasswordWO, plan.UserPasswordWOVersion, state.UserPasswordWOVersion); err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("userpassword_wo"), "Invalid Enrollment Password Rotation", err.Error())
 	}
 }
 
@@ -217,10 +297,18 @@ func (r *HostResource) Configure(ctx context.Context, req resource.ConfigureRequ
 func (r *HostResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data HostResourceModel
 
-	// Read Terraform plan data into the model
+	// Read persistent values from the plan and write-only values from config.
+	// Write-only attributes are intentionally not persisted in plan/state artifacts.
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	var config HostResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if err := validateHostEnrollmentPasswordCreate(config.UserPasswordWO, data.UserPasswordWOVersion); err != nil {
+		resp.Diagnostics.AddError("Invalid Host Enrollment Password Configuration", err.Error())
 		return
 	}
 
@@ -303,7 +391,9 @@ func (r *HostResource) Create(ctx context.Context, req resource.CreateRequest, r
 	if !data.RandomPassword.IsNull() {
 		optArgs.Random = data.RandomPassword.ValueBoolPointer()
 	}
-	if !data.UserPassword.IsNull() {
+	if !config.UserPasswordWO.IsNull() {
+		optArgs.Userpassword = config.UserPasswordWO.ValueStringPointer()
+	} else if !data.UserPassword.IsNull() {
 		optArgs.Userpassword = data.UserPassword.ValueStringPointer()
 	}
 	if !data.Force.IsNull() {
@@ -484,9 +574,11 @@ func (r *HostResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 func (r *HostResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data, state HostResourceModel
 
-	// Read Terraform plan data into the model
+	// Read persistent values from plan/state and the write-only secret from config.
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	var config HostResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -500,7 +592,7 @@ func (r *HostResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		Fqdn: data.Name.ValueString(),
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("[DEBUG] Update freeipa host %s from plan = %v", data.Name.ValueString(), data))
+	tflog.Debug(ctx, fmt.Sprintf("[DEBUG] Update freeipa host %s", data.Name.ValueString()))
 	if !data.Description.Equal(state.Description) {
 		if data.Description.ValueStringPointer() != nil {
 			optArgs.Description = data.Description.ValueStringPointer()
@@ -613,6 +705,15 @@ func (r *HostResource) Update(ctx context.Context, req resource.UpdateRequest, r
 			optArgs.Ipakrboktoauthasdelegate = &v
 		}
 	}
+	rotationPassword, err := hostEnrollmentPasswordRotation(config.UserPasswordWO, data.UserPasswordWOVersion, state.UserPasswordWOVersion)
+	if err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("userpassword_wo"), "Invalid Enrollment Password Rotation", err.Error())
+		return
+	}
+	if rotationPassword != nil {
+		optArgs.Userpassword = rotationPassword
+	}
+
 	if !data.RandomPassword.Equal(state.RandomPassword) {
 		if data.RandomPassword.ValueBoolPointer() != nil {
 			optArgs.Random = data.RandomPassword.ValueBoolPointer()
@@ -630,7 +731,7 @@ func (r *HostResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		}
 	}
 
-	_, err := r.client.HostMod(&args, &optArgs)
+	_, err = r.client.HostMod(&args, &optArgs)
 	if err != nil && !strings.Contains(err.Error(), "EmptyModlist") {
 		resp.Diagnostics.AddWarning("Client Warning", err.Error())
 	}

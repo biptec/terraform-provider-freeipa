@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -59,6 +60,10 @@ type freeipaProviderModel struct {
 	Host               types.String `tfsdk:"host"`
 	Username           types.String `tfsdk:"username"`
 	Password           types.String `tfsdk:"password"`
+	KerberosPrincipal  types.String `tfsdk:"kerberos_principal"`
+	KerberosRealm      types.String `tfsdk:"kerberos_realm"`
+	Krb5ConfPath       types.String `tfsdk:"krb5_conf_path"`
+	KeytabPath         types.String `tfsdk:"keytab_path"`
 	InsecureSkipVerify types.Bool   `tfsdk:"insecure"`
 	CaCertificate      types.String `tfsdk:"ca_certificate"`
 }
@@ -85,6 +90,22 @@ func (p *freeipaProvider) Schema(ctx context.Context, req provider.SchemaRequest
 				MarkdownDescription: "Password to use for connection. Can be set through the environment variable `FREEIPA_PASSWORD`.",
 				Optional:            true,
 				Sensitive:           true,
+			},
+			"kerberos_principal": schema.StringAttribute{
+				MarkdownDescription: "Kerberos principal used for provider authentication. A full principal such as `terraform/runner@EXAMPLE.TEST` is accepted. Can be set through `FREEIPA_KERBEROS_PRINCIPAL`.",
+				Optional:            true,
+			},
+			"kerberos_realm": schema.StringAttribute{
+				MarkdownDescription: "Kerberos realm. Optional when `kerberos_principal` includes `@REALM`. Can be set through `FREEIPA_KERBEROS_REALM`.",
+				Optional:            true,
+			},
+			"krb5_conf_path": schema.StringAttribute{
+				MarkdownDescription: "Path to `krb5.conf` used for Kerberos authentication. Defaults to `/etc/krb5.conf` and can be set through `FREEIPA_KRB5_CONF`.",
+				Optional:            true,
+			},
+			"keytab_path": schema.StringAttribute{
+				MarkdownDescription: "Path to the keytab used for Kerberos authentication. Defaults to `/etc/krb5.keytab` and can be set through `FREEIPA_KEYTAB`.",
+				Optional:            true,
 			},
 			"insecure": schema.BoolAttribute{
 				MarkdownDescription: "Whether to verify the server's SSL certificate. Can be set through the environment variable `FREEIPA_INSECURE`.",
@@ -124,6 +145,22 @@ func (p *freeipaProvider) Configure(ctx context.Context, req provider.ConfigureR
 		config.Password = types.StringValue(os.Getenv("FREEIPA_PASSWORD"))
 	}
 
+	if config.KerberosPrincipal.IsNull() {
+		config.KerberosPrincipal = types.StringValue(os.Getenv("FREEIPA_KERBEROS_PRINCIPAL"))
+	}
+
+	if config.KerberosRealm.IsNull() {
+		config.KerberosRealm = types.StringValue(os.Getenv("FREEIPA_KERBEROS_REALM"))
+	}
+
+	if config.Krb5ConfPath.IsNull() {
+		config.Krb5ConfPath = types.StringValue(os.Getenv("FREEIPA_KRB5_CONF"))
+	}
+
+	if config.KeytabPath.IsNull() {
+		config.KeytabPath = types.StringValue(os.Getenv("FREEIPA_KEYTAB"))
+	}
+
 	if config.InsecureSkipVerify.IsNull() {
 		config.InsecureSkipVerify = types.BoolValue(getEnvAsBool("FREEIPA_INSECURE", false))
 	}
@@ -145,24 +182,53 @@ func (p *freeipaProvider) Configure(ctx context.Context, req provider.ConfigureR
 		)
 	}
 
-	if config.Username.ValueString() == "" {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("username"),
-			"Missing FreeIPA Username",
-			"The provider cannot create the FreeIPA API client as there is a missing or empty value for the FreeIPA username. "+
-				"Set the username value in the configuration or use the FREEIPA_USERNAME environment variable. "+
-				"If either is already set, ensure the value is not empty.",
-		)
-	}
+	kerberosMode := kerberosConfigured(&config)
+	if kerberosMode {
+		if config.Krb5ConfPath.ValueString() == "" {
+			config.Krb5ConfPath = types.StringValue("/etc/krb5.conf")
+		}
+		if config.KeytabPath.ValueString() == "" {
+			config.KeytabPath = types.StringValue("/etc/krb5.keytab")
+		}
+		if _, _, err := normalizeKerberosPrincipal(config.KerberosPrincipal.ValueString(), config.KerberosRealm.ValueString()); err != nil {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("kerberos_principal"),
+				"Invalid Kerberos Principal",
+				err.Error(),
+			)
+		}
+		if config.Krb5ConfPath.ValueString() == "" {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("krb5_conf_path"),
+				"Missing Kerberos Configuration",
+				"Kerberos authentication requires a krb5.conf path. Set krb5_conf_path or FREEIPA_KRB5_CONF.",
+			)
+		}
+		if config.KeytabPath.ValueString() == "" {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("keytab_path"),
+				"Missing Kerberos Keytab",
+				"Kerberos authentication requires a keytab path. Set keytab_path or FREEIPA_KEYTAB.",
+			)
+		}
+	} else {
+		if config.Username.ValueString() == "" {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("username"),
+				"Missing FreeIPA Username",
+				"The provider cannot create the FreeIPA API client as there is a missing or empty value for the FreeIPA username. "+
+					"Set the username value in the configuration or use the FREEIPA_USERNAME environment variable.",
+			)
+		}
 
-	if config.Password.ValueString() == "" {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("password"),
-			"Missing FreeIPA Password",
-			"The provider cannot create the FreeIPA API client as there is a missing or empty value for the FreeIPA password. "+
-				"Set the password value in the configuration or use the FREEIPA_PASSWORD environment variable. "+
-				"If either is already set, ensure the value is not empty.",
-		)
+		if config.Password.ValueString() == "" {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("password"),
+				"Missing FreeIPA Password",
+				"The provider cannot create the FreeIPA API client as there is a missing or empty value for the FreeIPA password. "+
+					"Set the password value in the configuration or use the FREEIPA_PASSWORD environment variable.",
+			)
+		}
 	}
 
 	if config.InsecureSkipVerify.ValueBool() {
@@ -208,8 +274,7 @@ func (p *freeipaProvider) Configure(ctx context.Context, req provider.ConfigureR
 // Client creates a FreeIPA client scoped to the global API
 func (c *freeipaProvider) NewFreeIPAClient(ctx context.Context, conf *freeipaProviderModel) (*ipa.Client, error) {
 	tflog.Debug(ctx, fmt.Sprintf("[DEBUG] freeipa host : %s", conf.Host.ValueString()))
-	tflog.Debug(ctx, fmt.Sprintf("[DEBUG] freeipa username : %s", conf.Username.ValueString()))
-	tflog.Debug(ctx, fmt.Sprintf("[DEBUG] freeipa password : %s", conf.Password.ValueString()))
+	tflog.Debug(ctx, fmt.Sprintf("[DEBUG] freeipa auth mode : %s", map[bool]string{true: "kerberos", false: "password"}[kerberosConfigured(conf)]))
 	tflog.Debug(ctx, fmt.Sprintf("[DEBUG] freeipa insecure : %s", conf.InsecureSkipVerify.String()))
 	tflog.Debug(ctx, fmt.Sprintf("[DEBUG] freeipa cacert path : %s", conf.CaCertificate.ValueString()))
 
@@ -235,7 +300,39 @@ func (c *freeipaProvider) NewFreeIPAClient(ctx context.Context, conf *freeipaPro
 		},
 	}
 
-	client, err := ipa.Connect(conf.Host.ValueString(), tspt, conf.Username.ValueString(), conf.Password.ValueString())
+	var client *ipa.Client
+	var err error
+	authMode := "password"
+
+	if kerberosConfigured(conf) {
+		authMode = "Kerberos"
+		principal, realm, err := normalizeKerberosPrincipal(conf.KerberosPrincipal.ValueString(), conf.KerberosRealm.ValueString())
+		if err != nil {
+			return nil, err
+		}
+
+		krb5Conf, err := os.Open(conf.Krb5ConfPath.ValueString())
+		if err != nil {
+			return nil, fmt.Errorf("open krb5.conf: %w", err)
+		}
+		defer krb5Conf.Close()
+
+		keytab, err := os.Open(conf.KeytabPath.ValueString())
+		if err != nil {
+			return nil, fmt.Errorf("open Kerberos keytab: %w", err)
+		}
+		defer keytab.Close()
+
+		client, err = ipa.ConnectWithKerberos(conf.Host.ValueString(), tspt, &ipa.KerberosConnectOptions{
+			Krb5ConfigReader: krb5Conf,
+			KeytabReader:     keytab,
+			Username:         principal,
+			Realm:            realm,
+		})
+	} else {
+		client, err = ipa.Connect(conf.Host.ValueString(), tspt, conf.Username.ValueString(), conf.Password.ValueString())
+	}
+	client, err = validateFreeIPAClient(client, err, authMode)
 	if err != nil {
 		return nil, err
 	}
@@ -243,6 +340,50 @@ func (c *freeipaProvider) NewFreeIPAClient(ctx context.Context, conf *freeipaPro
 	tflog.Debug(ctx, fmt.Sprintf("[DEBUG] FreeIPA Client configured for host : %s", conf.Host.ValueString()))
 
 	return client, nil
+}
+
+func validateFreeIPAClient(client *ipa.Client, err error, authMode string) (*ipa.Client, error) {
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		return nil, fmt.Errorf("%s authentication did not return a FreeIPA API client", authMode)
+	}
+	return client, nil
+}
+
+func kerberosConfigured(conf *freeipaProviderModel) bool {
+	return strings.TrimSpace(conf.KerberosPrincipal.ValueString()) != "" ||
+		strings.TrimSpace(conf.KerberosRealm.ValueString()) != "" ||
+		strings.TrimSpace(conf.Krb5ConfPath.ValueString()) != "" ||
+		strings.TrimSpace(conf.KeytabPath.ValueString()) != ""
+}
+
+func normalizeKerberosPrincipal(principal, realm string) (string, string, error) {
+	principal = strings.TrimSpace(principal)
+	realm = strings.TrimSpace(realm)
+	if principal == "" {
+		return "", "", fmt.Errorf("Kerberos authentication requires kerberos_principal or FREEIPA_KERBEROS_PRINCIPAL")
+	}
+
+	if at := strings.LastIndex(principal, "@"); at >= 0 {
+		if at == 0 || at == len(principal)-1 {
+			return "", "", fmt.Errorf("invalid Kerberos principal %q", principal)
+		}
+		principalRealm := principal[at+1:]
+		principal = principal[:at]
+		if realm == "" {
+			realm = principalRealm
+		} else if !strings.EqualFold(realm, principalRealm) {
+			return "", "", fmt.Errorf("Kerberos principal realm %q does not match kerberos_realm %q", principalRealm, realm)
+		}
+	}
+
+	if realm == "" {
+		return "", "", fmt.Errorf("Kerberos authentication requires kerberos_realm unless kerberos_principal includes @REALM")
+	}
+
+	return principal, realm, nil
 }
 
 func (p *freeipaProvider) Resources(ctx context.Context) []func() resource.Resource {
