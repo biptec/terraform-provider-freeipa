@@ -18,8 +18,8 @@ The provider needs to be configured with the proper endpoints and credentials be
 terraform {
   required_providers {
     freeipa = {
-      version = "5.5.0"
-      source  = "rework-space-com/freeipa"
+      version = "5.5.1"
+      source  = "biptec/freeipa"
     }
   }
 }

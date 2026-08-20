@@ -14,6 +14,25 @@ Requirements
 - Terraform or OpenTofu 1.11+ when using `freeipa_host.userpassword_wo`.
 - [Go](https://golang.org/doc/install) 1.25.11+ to build the provider plugin.
 
+Installation
+------------
+
+The BIPTEC provider is published as `biptec/freeipa`. OpenTofu resolves this
+source from the public OpenTofu Registry. Releases use plain semantic versions
+(`vMAJOR.MINOR.PATCH`) and include the OpenTofu/Terraform registry manifest,
+platform archives, signed checksums, and the detached checksum signature.
+
+```hcl
+terraform {
+  required_providers {
+    freeipa = {
+      source  = "biptec/freeipa"
+      version = "~> 5.5"
+    }
+  }
+}
+```
+
 Authentication
 --------------
 
