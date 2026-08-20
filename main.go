@@ -43,7 +43,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		Address: "registry.terraform.io/rework-space-com/freeipa",
+		Address: "registry.terraform.io/biptec/freeipa",
 		Debug:   debug,
 	}
 
