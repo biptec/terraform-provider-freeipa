@@ -302,8 +302,10 @@ func (c *freeipaProvider) NewFreeIPAClient(ctx context.Context, conf *freeipaPro
 
 	var client *ipa.Client
 	var err error
+	authMode := "password"
 
 	if kerberosConfigured(conf) {
+		authMode = "Kerberos"
 		principal, realm, err := normalizeKerberosPrincipal(conf.KerberosPrincipal.ValueString(), conf.KerberosRealm.ValueString())
 		if err != nil {
 			return nil, err
@@ -330,12 +332,23 @@ func (c *freeipaProvider) NewFreeIPAClient(ctx context.Context, conf *freeipaPro
 	} else {
 		client, err = ipa.Connect(conf.Host.ValueString(), tspt, conf.Username.ValueString(), conf.Password.ValueString())
 	}
+	client, err = validateFreeIPAClient(client, err, authMode)
 	if err != nil {
 		return nil, err
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("[DEBUG] FreeIPA Client configured for host : %s", conf.Host.ValueString()))
 
+	return client, nil
+}
+
+func validateFreeIPAClient(client *ipa.Client, err error, authMode string) (*ipa.Client, error) {
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		return nil, fmt.Errorf("%s authentication did not return a FreeIPA API client", authMode)
+	}
 	return client, nil
 }
 

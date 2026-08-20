@@ -1,7 +1,10 @@
 package freeipa
 
 import (
+	"fmt"
 	"testing"
+
+	ipa "github.com/infra-monkey/go-freeipa/freeipa"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
@@ -57,5 +60,22 @@ func TestKerberosConfigured(t *testing.T) {
 	byKeytab := &freeipaProviderModel{KeytabPath: types.StringValue("/run/secrets/freeipa.keytab")}
 	if !kerberosConfigured(byKeytab) {
 		t.Fatal("keytab path must select Kerberos mode")
+	}
+}
+
+func TestValidateFreeIPAClient(t *testing.T) {
+	if _, err := validateFreeIPAClient(nil, nil, "Kerberos"); err == nil {
+		t.Fatal("nil Kerberos client without an error must be rejected")
+	}
+
+	wantErr := fmt.Errorf("authentication failed")
+	if _, err := validateFreeIPAClient(nil, wantErr, "Kerberos"); err != wantErr {
+		t.Fatalf("expected original error, got %v", err)
+	}
+
+	client := &ipa.Client{}
+	got, err := validateFreeIPAClient(client, nil, "Kerberos")
+	if err != nil || got != client {
+		t.Fatalf("valid client rejected: client=%p err=%v", got, err)
 	}
 }
