@@ -14,4 +14,18 @@ The provider needs to be configured with the proper endpoints and credentials be
 
 {{if .HasExample}}{{tffile .ExampleFile}}{{end}}
 
+## Authentication modes
+
+The existing username/password mode remains supported. Kerberos/keytab authentication is also available for automation. Configure `kerberos_principal` together with the Kerberos configuration/keytab paths, or use the corresponding `FREEIPA_KERBEROS_*` environment variables.
+
+If any Kerberos setting is configured, Kerberos takes precedence over username/password. Authentication errors in Kerberos mode are returned to the caller and never trigger a silent password fallback. Keytabs are secrets and should normally be mode `0600` and supplied by a secret store.
+
+FreeIPA uses constrained delegation from its HTTP service to LDAP. The provider credentials therefore need a forwardable TGT; configure `forwardable = true` in `krb5.conf` or an equivalent Kerberos policy.
+
+## Write-only enrollment passwords
+
+`freeipa_host.userpassword_wo` requires Terraform/OpenTofu 1.11 or later. The value is `Sensitive` and `WriteOnly`: it is sent to FreeIPA but is not persisted in plan/state. `userpassword_wo_version` is persistent and must be incremented when rotating the caller-supplied enrollment password. A version change without a new write-only password fails during planning.
+
+Legacy `userpassword`, `random_password`, and `generated_password` remain available and retain their existing stateful behavior.
+
 {{ .SchemaMarkdown | trimspace }}
