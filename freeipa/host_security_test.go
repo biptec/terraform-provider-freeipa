@@ -2,6 +2,7 @@ package freeipa
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -68,5 +69,21 @@ func TestHostEnrollmentPasswordRotation(t *testing.T) {
 
 	if _, err = hostEnrollmentPasswordRotation(types.StringNull(), types.Int64Value(2), types.Int64Value(1)); err == nil {
 		t.Fatal("version change without secret must fail")
+	}
+}
+
+func TestHostModificationError(t *testing.T) {
+	if err := hostModificationError(nil); err != nil {
+		t.Fatalf("nil update error must remain nil: %v", err)
+	}
+
+	empty := errors.New("FreeIPA error: EmptyModlist")
+	if err := hostModificationError(empty); err != nil {
+		t.Fatalf("EmptyModlist must remain an accepted no-op: %v", err)
+	}
+
+	expected := errors.New("FreeIPA error: InsufficientAccess")
+	if err := hostModificationError(expected); !errors.Is(err, expected) {
+		t.Fatalf("real host modification errors must propagate, got %v", err)
 	}
 }
