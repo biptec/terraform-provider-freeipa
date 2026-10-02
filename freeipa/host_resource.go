@@ -104,6 +104,13 @@ func hostEnrollmentPasswordRotation(secret types.String, plannedVersion, priorVe
 	return &password, nil
 }
 
+func hostModificationError(err error) error {
+	if err == nil || strings.Contains(err.Error(), "EmptyModlist") {
+		return nil
+	}
+	return err
+}
+
 func (r *HostResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_host"
 }
@@ -732,8 +739,9 @@ func (r *HostResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	}
 
 	_, err = r.client.HostMod(&args, &optArgs)
-	if err != nil && !strings.Contains(err.Error(), "EmptyModlist") {
-		resp.Diagnostics.AddWarning("Client Warning", err.Error())
+	if err = hostModificationError(err); err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error updating freeipa host: %s", err))
+		return
 	}
 
 	data.GeneratedPassword = state.GeneratedPassword
