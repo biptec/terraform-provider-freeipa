@@ -306,20 +306,20 @@ func (c *freeipaProvider) NewFreeIPAClient(ctx context.Context, conf *freeipaPro
 
 	if kerberosConfigured(conf) {
 		authMode = "Kerberos"
-		principal, realm, err := normalizeKerberosPrincipal(conf.KerberosPrincipal.ValueString(), conf.KerberosRealm.ValueString())
-		if err != nil {
-			return nil, err
+		principal, realm, normalizeErr := normalizeKerberosPrincipal(conf.KerberosPrincipal.ValueString(), conf.KerberosRealm.ValueString())
+		if normalizeErr != nil {
+			return nil, normalizeErr
 		}
 
-		krb5Conf, err := os.Open(conf.Krb5ConfPath.ValueString())
-		if err != nil {
-			return nil, fmt.Errorf("open krb5.conf: %w", err)
+		krb5Conf, openErr := os.Open(conf.Krb5ConfPath.ValueString())
+		if openErr != nil {
+			return nil, fmt.Errorf("open krb5.conf: %w", openErr)
 		}
 		defer krb5Conf.Close()
 
-		keytab, err := os.Open(conf.KeytabPath.ValueString())
-		if err != nil {
-			return nil, fmt.Errorf("open Kerberos keytab: %w", err)
+		keytab, openErr := os.Open(conf.KeytabPath.ValueString())
+		if openErr != nil {
+			return nil, fmt.Errorf("open Kerberos keytab: %w", openErr)
 		}
 		defer keytab.Close()
 

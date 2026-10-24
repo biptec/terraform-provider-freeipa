@@ -180,7 +180,7 @@ data "freeipa_dns_zone" "bad_principal" {
   zone_name = %q
 }
 `, biptecTestAccZone()),
-			ExpectError: regexp.MustCompile(`(?is)(initial login failed|Kerberos authentication did not return a FreeIPA API\s+client)`),
+			ExpectError: regexp.MustCompile(`(?is)initial login failed`),
 		}},
 	})
 }
@@ -204,7 +204,7 @@ data "freeipa_dns_zone" "bad_krb5" {
   zone_name = %q
 }
 `, biptecTestAccZone()),
-			ExpectError: regexp.MustCompile(`(?is)(reading kerberos configuration|Kerberos authentication did not return a FreeIPA API\s+client)`),
+			ExpectError: regexp.MustCompile(`(?is)reading kerberos configuration`),
 		}},
 	})
 }
