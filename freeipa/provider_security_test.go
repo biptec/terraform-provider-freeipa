@@ -1,7 +1,11 @@
 package freeipa
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	ipa "github.com/infra-monkey/go-freeipa/freeipa"
@@ -77,5 +81,38 @@ func TestValidateFreeIPAClient(t *testing.T) {
 	got, err := validateFreeIPAClient(client, nil, "Kerberos")
 	if err != nil || got != client {
 		t.Fatalf("valid client rejected: client=%p err=%v", got, err)
+	}
+}
+
+func TestNewFreeIPAClientPropagatesKerberosConnectError(t *testing.T) {
+	tmpDir := t.TempDir()
+	krb5ConfPath := filepath.Join(tmpDir, "krb5.conf")
+	keytabPath := filepath.Join(tmpDir, "test.keytab")
+
+	krb5Conf := "[libdefaults]\n    default_realm = EXAMPLE.TEST\n[realms]\n    EXAMPLE.TEST = {\n        kdc = 127.0.0.1\n    }\n"
+	if err := os.WriteFile(krb5ConfPath, []byte(krb5Conf), 0o600); err != nil {
+		t.Fatalf("write krb5.conf: %v", err)
+	}
+	if err := os.WriteFile(keytabPath, []byte("not-a-keytab"), 0o600); err != nil {
+		t.Fatalf("write test keytab: %v", err)
+	}
+
+	provider := &freeipaProvider{}
+	conf := &freeipaProviderModel{
+		Host:              types.StringValue("ipa.example.test"),
+		KerberosPrincipal: types.StringValue("terraform/runner@EXAMPLE.TEST"),
+		Krb5ConfPath:      types.StringValue(krb5ConfPath),
+		KeytabPath:        types.StringValue(keytabPath),
+	}
+
+	_, err := provider.NewFreeIPAClient(context.Background(), conf)
+	if err == nil {
+		t.Fatal("expected Kerberos connection error")
+	}
+	if strings.Contains(err.Error(), "Kerberos authentication did not return a FreeIPA API client") {
+		t.Fatalf("Kerberos connection error was lost: %v", err)
+	}
+	if !strings.Contains(err.Error(), "parsing keytab") {
+		t.Fatalf("expected original Kerberos error, got: %v", err)
 	}
 }
