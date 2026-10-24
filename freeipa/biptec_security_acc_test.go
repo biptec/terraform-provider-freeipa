@@ -188,7 +188,7 @@ data "freeipa_dns_zone" "bad_principal" {
 func TestAccBIPTECKerberosMalformedConfig(t *testing.T) {
 	biptecTestAccRequireKerberos(t)
 	badConfig := t.TempDir() + "/krb5.conf"
-	if err := os.WriteFile(badConfig, []byte("this is not a kerberos configuration\n"), 0o600); err != nil {
+	if err := os.WriteFile(badConfig, []byte("[libdefaults]\nforwardable = definitely-not-a-boolean\n"), 0o600); err != nil {
 		t.Fatalf("write malformed krb5.conf: %v", err)
 	}
 
