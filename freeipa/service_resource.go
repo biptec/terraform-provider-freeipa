@@ -4,6 +4,7 @@ package freeipa
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -93,6 +94,17 @@ func serviceNotFound(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "NotFound")
 }
 
+func serviceAddResponseDecodeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *ipa.Error
+	if errors.As(err, &apiErr) {
+		return false
+	}
+	return strings.Contains(err.Error(), "unexpected value for field")
+}
+
 func serviceExists(client *ipa.Client, principal string) (bool, error) {
 	principal = strings.TrimSpace(principal)
 	if principal == "" {
@@ -160,10 +172,28 @@ func (r *ServiceResource) Create(ctx context.Context, req resource.CreateRequest
 			},
 		)
 		if err != nil {
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error creating FreeIPA service %s: %s", principal, err))
-			return
+			if serviceAddResponseDecodeError(err) {
+				committed, verifyErr := serviceExists(r.client, principal)
+				if verifyErr != nil {
+					resp.Diagnostics.AddError(
+						"Client Error",
+						fmt.Sprintf("FreeIPA service %s returned an undecodable create response (%s) and post-create verification failed: %s", principal, err, verifyErr),
+					)
+					return
+				}
+				if committed {
+					tflog.Warn(ctx, fmt.Sprintf("[WARN] FreeIPA service %s create response was undecodable but service_find confirmed the create committed: %s", principal, err))
+				} else {
+					resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error creating FreeIPA service %s: %s", principal, err))
+					return
+				}
+			} else {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error creating FreeIPA service %s: %s", principal, err))
+				return
+			}
+		} else {
+			tflog.Debug(ctx, fmt.Sprintf("[DEBUG] Create FreeIPA service returned %s", ret.String()))
 		}
-		tflog.Debug(ctx, fmt.Sprintf("[DEBUG] Create FreeIPA service returned %s", ret.String()))
 	}
 
 	data.Id = types.StringValue(principal)
