@@ -52,6 +52,12 @@ func TestValidateHostEnrollmentPasswordCreate(t *testing.T) {
 	if err := validateHostEnrollmentPasswordCreate(types.StringNull(), types.Int64Null()); err != nil {
 		t.Fatalf("legacy host create without write-only enrollment must remain valid: %v", err)
 	}
+	if err := validateHostEnrollmentPasswordCreate(types.StringNull(), types.Int64Unknown()); err != nil {
+		t.Fatalf("computed unknown version without enrollment intent must remain valid during planning: %v", err)
+	}
+	if err := validateHostEnrollmentPasswordCreate(types.StringUnknown(), types.Int64Value(1)); err != nil {
+		t.Fatalf("unknown write-only enrollment secret must defer validation until apply: %v", err)
+	}
 }
 
 func TestHostEnrollmentPasswordRotation(t *testing.T) {
@@ -69,6 +75,16 @@ func TestHostEnrollmentPasswordRotation(t *testing.T) {
 
 	if _, err = hostEnrollmentPasswordRotation(types.StringNull(), types.Int64Value(2), types.Int64Value(1)); err == nil {
 		t.Fatal("version change without secret must fail")
+	}
+
+	rotated, err = hostEnrollmentPasswordRotation(types.StringNull(), types.Int64Null(), types.Int64Value(1))
+	if err != nil || rotated != nil {
+		t.Fatalf("omitted optional+computed version must not manufacture rotation intent, got value=%v err=%v", rotated, err)
+	}
+
+	rotated, err = hostEnrollmentPasswordRotation(types.StringNull(), types.Int64Unknown(), types.Int64Value(1))
+	if err != nil || rotated != nil {
+		t.Fatalf("unknown computed version must defer rotation intent, got value=%v err=%v", rotated, err)
 	}
 }
 
