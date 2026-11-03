@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	ipa "github.com/infra-monkey/go-freeipa/freeipa"
 )
 
 func TestServiceResourceMetadataAndSchema(t *testing.T) {
@@ -39,6 +40,21 @@ func TestServiceResourceMetadataAndSchema(t *testing.T) {
 		if len(attr.PlanModifiers) != 0 {
 			t.Fatalf("%s must not require replacement; it is create-time metadata", name)
 		}
+	}
+}
+
+func TestServiceAddResponseDecodeError(t *testing.T) {
+	if !serviceAddResponseDecodeError(errors.New("unexpected value for field Subject: <nil> (<nil>)")) {
+		t.Fatal("expected generated response-decoder error to be recoverable")
+	}
+	if serviceAddResponseDecodeError(&ipa.Error{Name: "DNSNotARecordError", Code: 4019, Message: "missing DNS record"}) {
+		t.Fatal("FreeIPA API errors must never be treated as response-decoder errors")
+	}
+	if serviceAddResponseDecodeError(errors.New("connection refused")) {
+		t.Fatal("unrelated transport errors must not be treated as response-decoder errors")
+	}
+	if serviceAddResponseDecodeError(nil) {
+		t.Fatal("nil error must not be recoverable")
 	}
 }
 

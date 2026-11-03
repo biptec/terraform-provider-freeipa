@@ -92,6 +92,13 @@ func (r *ServicePrincipalAliasResource) associationExists(principal, alias strin
 		},
 	)
 	if err != nil {
+		if serviceAddResponseDecodeError(err) {
+			// This find is filtered server-side by both the canonical principal
+			// and the requested alias. An empty match set decodes normally; the
+			// certificate-less Subject decoder failure can only happen after
+			// FreeIPA returned a matching service record.
+			return true, nil
+		}
 		return false, err
 	}
 	for _, service := range res.Result {
@@ -129,8 +136,15 @@ func (r *ServicePrincipalAliasResource) Create(ctx context.Context, req resource
 			&ipa.ServiceAddPrincipalArgs{Krbcanonicalname: principal, Krbprincipalname: aliases},
 			&ipa.ServiceAddPrincipalOptionalArgs{},
 		); err != nil {
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error adding alias %s to FreeIPA service %s: %s", alias, principal, err))
-			return
+			if !serviceAddResponseDecodeError(err) {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error adding alias %s to FreeIPA service %s: %s", alias, principal, err))
+				return
+			}
+			committed, verifyErr := r.associationExists(principal, alias)
+			if verifyErr != nil || !committed {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("FreeIPA principal alias update for %s -> %s returned an undecodable response (%s) and could not be confirmed: %v", principal, alias, err, verifyErr))
+				return
+			}
 		}
 	}
 	data.Id = types.StringValue(principal + "|" + alias)
@@ -191,7 +205,14 @@ func (r *ServicePrincipalAliasResource) Delete(ctx context.Context, req resource
 		&ipa.ServiceRemovePrincipalOptionalArgs{},
 	)
 	if err != nil && !serviceNotFound(err) {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error removing alias %s from FreeIPA service %s: %s", alias, principal, err))
+		if !serviceAddResponseDecodeError(err) {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error removing alias %s from FreeIPA service %s: %s", alias, principal, err))
+			return
+		}
+		stillExists, verifyErr := r.associationExists(principal, alias)
+		if verifyErr != nil || stillExists {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("FreeIPA principal alias removal for %s -> %s returned an undecodable response (%s) and could not be confirmed: %v", principal, alias, err, verifyErr))
+		}
 	}
 }
 

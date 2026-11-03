@@ -84,6 +84,13 @@ func (r *ServiceManagedByHostResource) associationExists(principal, host string)
 		},
 	)
 	if err != nil {
+		if serviceAddResponseDecodeError(err) {
+			// This find is filtered server-side by both the canonical principal
+			// and the requested managed-by host. An empty match set decodes
+			// normally; the certificate-less Subject decoder failure can only
+			// happen after FreeIPA returned a matching service record.
+			return true, nil
+		}
 		return false, err
 	}
 	for _, service := range res.Result {
@@ -117,8 +124,15 @@ func (r *ServiceManagedByHostResource) Create(ctx context.Context, req resource.
 			&ipa.ServiceAddHostArgs{Krbcanonicalname: principal},
 			&ipa.ServiceAddHostOptionalArgs{Host: &hosts},
 		); err != nil {
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error granting host %s management of FreeIPA service %s: %s", host, principal, err))
-			return
+			if !serviceAddResponseDecodeError(err) {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error granting host %s management of FreeIPA service %s: %s", host, principal, err))
+				return
+			}
+			committed, verifyErr := r.associationExists(principal, host)
+			if verifyErr != nil || !committed {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("FreeIPA managedBy update for %s -> %s returned an undecodable response (%s) and could not be confirmed: %v", principal, host, err, verifyErr))
+				return
+			}
 		}
 	}
 	data.Id = types.StringValue(principal + "|" + host)
@@ -179,7 +193,14 @@ func (r *ServiceManagedByHostResource) Delete(ctx context.Context, req resource.
 		&ipa.ServiceRemoveHostOptionalArgs{Host: &hosts},
 	)
 	if err != nil && !serviceNotFound(err) {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error removing host %s management from FreeIPA service %s: %s", host, principal, err))
+		if !serviceAddResponseDecodeError(err) {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error removing host %s management from FreeIPA service %s: %s", host, principal, err))
+			return
+		}
+		stillExists, verifyErr := r.associationExists(principal, host)
+		if verifyErr != nil || stillExists {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("FreeIPA managedBy removal for %s -> %s returned an undecodable response (%s) and could not be confirmed: %v", principal, host, err, verifyErr))
+		}
 	}
 }
 
