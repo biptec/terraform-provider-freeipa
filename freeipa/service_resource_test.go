@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 )
 
 func TestServiceResourceMetadataAndSchema(t *testing.T) {
@@ -28,6 +29,15 @@ func TestServiceResourceMetadataAndSchema(t *testing.T) {
 	for _, name := range []string{"id", "principal", "adopt_existing", "force", "skip_host_check"} {
 		if _, ok := schemaResp.Schema.Attributes[name]; !ok {
 			t.Fatalf("missing schema attribute %q", name)
+		}
+	}
+	for _, name := range []string{"force", "skip_host_check"} {
+		attr, ok := schemaResp.Schema.Attributes[name].(schema.BoolAttribute)
+		if !ok {
+			t.Fatalf("%s is not a bool attribute", name)
+		}
+		if len(attr.PlanModifiers) != 0 {
+			t.Fatalf("%s must not require replacement; it is create-time metadata", name)
 		}
 	}
 }

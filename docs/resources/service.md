@@ -22,8 +22,8 @@ FreeIPA Kerberos service principal resource. Manages only the canonical service 
 ### Optional
 
 - `adopt_existing` (Boolean) Adopt an already-existing canonical FreeIPA service with the same principal during resource creation instead of failing with a duplicate-entry error. Intended for controlled migration into Terraform ownership; aliases are not adopted as canonical services.
-- `force` (Boolean) Force service creation when the service hostname is not resolvable in DNS. Changing this creation-time option replaces the Terraform resource.
-- `skip_host_check` (Boolean) Allow creation when the service hostname does not correspond to an existing FreeIPA host object. Changing this creation-time option replaces the Terraform resource.
+- `force` (Boolean) Force service creation when the service hostname is not resolvable in DNS. This is consumed only when a remote service must be created; changing it for an existing/adopted service does not replace the FreeIPA service.
+- `skip_host_check` (Boolean) Allow creation when the service hostname does not correspond to an existing FreeIPA host object. This is consumed only when a remote service must be created; changing it for an existing/adopted service does not replace the FreeIPA service.
 
 ### Read-Only
 

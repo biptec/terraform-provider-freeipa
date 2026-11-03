@@ -10,7 +10,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -64,14 +63,12 @@ func (r *ServiceResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Optional:            true,
 			},
 			"force": schema.BoolAttribute{
-				MarkdownDescription: "Force service creation when the service hostname is not resolvable in DNS. This is creation-time behavior; changing it replaces the Terraform resource without changing the service principal identity.",
+				MarkdownDescription: "Force service creation when the service hostname is not resolvable in DNS. This option is consumed only when the remote service must be created; changing it for an existing/adopted service updates Terraform state without replacing the FreeIPA service.",
 				Optional:            true,
-				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.RequiresReplace()},
 			},
 			"skip_host_check": schema.BoolAttribute{
-				MarkdownDescription: "Allow creation when the service hostname does not correspond to an existing FreeIPA host object. This is creation-time behavior; changing it replaces the Terraform resource without changing the service principal identity.",
+				MarkdownDescription: "Allow creation when the service hostname does not correspond to an existing FreeIPA host object. This option is consumed only when the remote service must be created; changing it for an existing/adopted service updates Terraform state without replacing the FreeIPA service.",
 				Optional:            true,
-				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.RequiresReplace()},
 			},
 		},
 	}
@@ -206,9 +203,9 @@ func (r *ServiceResource) Update(ctx context.Context, req resource.UpdateRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// principal, force and skip_host_check require replacement. adopt_existing
-	// only controls initial ownership adoption. Keep this implementation
-	// defensive in case framework behavior changes.
+	// principal requires replacement. adopt_existing, force and skip_host_check
+	// are ownership/create-time controls only; updating them must never destroy
+	// and recreate an already-existing/adopted FreeIPA service.
 	data.Id = types.StringValue(data.Principal.ValueString())
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
