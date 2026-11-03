@@ -231,6 +231,7 @@ func (r *HostResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"userpassword_wo_version": schema.Int64Attribute{
 				MarkdownDescription: "Persistent rotation trigger for `userpassword_wo`. Increment this value when setting a new caller-supplied enrollment password on an existing host. Changing the version without supplying `userpassword_wo` fails; the host is never recreated implicitly for OTP rotation.",
 				Optional:            true,
+				Computed:            true,
 			},
 			"random_password": schema.BoolAttribute{
 				MarkdownDescription: "Legacy option that asks FreeIPA to generate a random bulk-enrollment password. The generated value is stateful; prefer caller-supplied `userpassword_wo` for external two-stage enrollment workflows.",

@@ -29,7 +29,7 @@ func TestHostEnrollmentPasswordSchema(t *testing.T) {
 	if !ok {
 		t.Fatalf("userpassword_wo_version has unexpected schema type %T", resp.Schema.Attributes["userpassword_wo_version"])
 	}
-	if !version.Optional || version.Sensitive || version.WriteOnly || version.Computed {
+	if !version.Optional || version.Sensitive || version.WriteOnly || !version.Computed {
 		t.Fatalf("unexpected userpassword_wo_version contract: optional=%v sensitive=%v writeOnly=%v computed=%v", version.Optional, version.Sensitive, version.WriteOnly, version.Computed)
 	}
 }
