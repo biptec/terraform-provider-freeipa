@@ -32,6 +32,7 @@ type ServiceResource struct {
 type ServiceResourceModel struct {
 	Id            types.String `tfsdk:"id"`
 	Principal     types.String `tfsdk:"principal"`
+	AdoptExisting types.Bool   `tfsdk:"adopt_existing"`
 	Force         types.Bool   `tfsdk:"force"`
 	SkipHostCheck types.Bool   `tfsdk:"skip_host_check"`
 }
@@ -57,6 +58,10 @@ func (r *ServiceResource) Schema(ctx context.Context, req resource.SchemaRequest
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+			},
+			"adopt_existing": schema.BoolAttribute{
+				MarkdownDescription: "Adopt an already-existing canonical FreeIPA service with the same principal during resource creation instead of failing with a duplicate-entry error. This is intended for controlled migration of legacy service identities into Terraform ownership; aliases are not adopted as canonical services.",
+				Optional:            true,
 			},
 			"force": schema.BoolAttribute{
 				MarkdownDescription: "Force service creation when the service hostname is not resolvable in DNS. This is creation-time behavior; changing it replaces the Terraform resource without changing the service principal identity.",
@@ -132,20 +137,37 @@ func (r *ServiceResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	force := data.Force.ValueBool()
-	skipHostCheck := data.SkipHostCheck.ValueBool()
-	ret, err := r.client.ServiceAdd(
-		&ipa.ServiceAddArgs{Krbcanonicalname: principal},
-		&ipa.ServiceAddOptionalArgs{
-			Force:         &force,
-			SkipHostCheck: &skipHostCheck,
-		},
-	)
+	exists, err := serviceExists(r.client, principal)
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error creating FreeIPA service %s: %s", principal, err))
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error checking whether FreeIPA service %s already exists: %s", principal, err))
 		return
 	}
-	tflog.Debug(ctx, fmt.Sprintf("[DEBUG] Create FreeIPA service returned %s", ret.String()))
+
+	if exists {
+		if !data.AdoptExisting.ValueBool() {
+			resp.Diagnostics.AddError(
+				"FreeIPA Service Already Exists",
+				fmt.Sprintf("FreeIPA service %s already exists outside this Terraform state. Import it explicitly or set adopt_existing=true for a controlled migration into Terraform ownership.", principal),
+			)
+			return
+		}
+		tflog.Info(ctx, fmt.Sprintf("[INFO] Adopting existing FreeIPA service %s into Terraform ownership", principal))
+	} else {
+		force := data.Force.ValueBool()
+		skipHostCheck := data.SkipHostCheck.ValueBool()
+		ret, err := r.client.ServiceAdd(
+			&ipa.ServiceAddArgs{Krbcanonicalname: principal},
+			&ipa.ServiceAddOptionalArgs{
+				Force:         &force,
+				SkipHostCheck: &skipHostCheck,
+			},
+		)
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error creating FreeIPA service %s: %s", principal, err))
+			return
+		}
+		tflog.Debug(ctx, fmt.Sprintf("[DEBUG] Create FreeIPA service returned %s", ret.String()))
+	}
 
 	data.Id = types.StringValue(principal)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -184,8 +206,9 @@ func (r *ServiceResource) Update(ctx context.Context, req resource.UpdateRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// principal, force and skip_host_check all require replacement. Keep this
-	// implementation defensive in case framework behavior changes.
+	// principal, force and skip_host_check require replacement. adopt_existing
+	// only controls initial ownership adoption. Keep this implementation
+	// defensive in case framework behavior changes.
 	data.Id = types.StringValue(data.Principal.ValueString())
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -237,6 +260,7 @@ func (r *ServiceResource) ImportState(ctx context.Context, req resource.ImportSt
 
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), principal)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("principal"), principal)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("adopt_existing"), false)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("force"), false)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("skip_host_check"), false)...)
 }
