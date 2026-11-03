@@ -25,7 +25,7 @@ func TestServiceResourceMetadataAndSchema(t *testing.T) {
 	if schemaResp.Diagnostics.HasError() {
 		t.Fatalf("schema diagnostics: %v", schemaResp.Diagnostics)
 	}
-	for _, name := range []string{"id", "principal", "managed_by_host", "force", "skip_host_check"} {
+	for _, name := range []string{"id", "principal", "force", "skip_host_check"} {
 		if _, ok := schemaResp.Schema.Attributes[name]; !ok {
 			t.Fatalf("missing schema attribute %q", name)
 		}

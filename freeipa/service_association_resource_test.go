@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
-	ipa "github.com/infra-monkey/go-freeipa/freeipa"
 )
 
 func TestServiceAssociationSchemas(t *testing.T) {
@@ -54,21 +53,12 @@ func TestServiceAssociationSchemas(t *testing.T) {
 	}
 }
 
-func TestServicePrincipalAliasHelpers(t *testing.T) {
-	aliases := []string{
-		"HTTP/router.central.example.test@EXAMPLE.TEST",
-		"HTTP/etna.host.example.test@EXAMPLE.TEST",
-	}
-	service := ipa.Service{Krbprincipalname: &aliases}
-
-	if !serviceHasPrincipalAlias(service, "HTTP/etna.host.example.test") {
-		t.Fatal("expected alias without realm to match FreeIPA result with realm")
-	}
-	if serviceHasPrincipalAlias(service, "HTTP/rigi.host.example.test") {
-		t.Fatal("unexpected alias match")
-	}
+func TestNormalizeServicePrincipal(t *testing.T) {
 	if normalizeServicePrincipal(" HTTP/router.central.example.test@EXAMPLE.TEST ") != "HTTP/router.central.example.test" {
 		t.Fatal("principal normalization failed")
+	}
+	if normalizeServicePrincipal("HTTP/router.central.example.test") != "HTTP/router.central.example.test" {
+		t.Fatal("principal without realm changed unexpectedly")
 	}
 }
 

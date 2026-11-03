@@ -76,30 +76,30 @@ func normalizeServicePrincipal(value string) string {
 	return value
 }
 
-func serviceHasPrincipalAlias(result ipa.Service, alias string) bool {
-	alias = normalizeServicePrincipal(alias)
-	if result.Krbprincipalname == nil {
-		return false
-	}
-	for _, candidate := range *result.Krbprincipalname {
-		if normalizeServicePrincipal(candidate) == alias {
-			return true
-		}
-	}
-	return false
-}
-
 func (r *ServicePrincipalAliasResource) associationExists(principal, alias string) (bool, error) {
-	all := true
-	raw := true
-	res, err := r.client.ServiceShow(
-		&ipa.ServiceShowArgs{Krbcanonicalname: principal},
-		&ipa.ServiceShowOptionalArgs{All: &all, Raw: &raw},
+	pkeyOnly := true
+	noMembers := true
+	principalFilter := principal
+	aliasFilter := []string{alias}
+	res, err := r.client.ServiceFind(
+		"",
+		&ipa.ServiceFindArgs{},
+		&ipa.ServiceFindOptionalArgs{
+			Krbcanonicalname: &principalFilter,
+			Krbprincipalname: &aliasFilter,
+			PkeyOnly:         &pkeyOnly,
+			NoMembers:        &noMembers,
+		},
 	)
 	if err != nil {
 		return false, err
 	}
-	return serviceHasPrincipalAlias(res.Result, alias), nil
+	for _, service := range res.Result {
+		if normalizeServicePrincipal(service.Krbcanonicalname) == normalizeServicePrincipal(principal) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (r *ServicePrincipalAliasResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -174,8 +174,19 @@ func (r *ServicePrincipalAliasResource) Delete(ctx context.Context, req resource
 	}
 	principal := data.Principal.ValueString()
 	alias := data.Alias.ValueString()
+	exists, err := r.associationExists(principal, alias)
+	if err != nil {
+		if serviceNotFound(err) {
+			return
+		}
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error checking alias %s on FreeIPA service %s before removal: %s", alias, principal, err))
+		return
+	}
+	if !exists {
+		return
+	}
 	aliases := []string{alias}
-	_, err := r.client.ServiceRemovePrincipal(
+	_, err = r.client.ServiceRemovePrincipal(
 		&ipa.ServiceRemovePrincipalArgs{Krbcanonicalname: principal, Krbprincipalname: aliases},
 		&ipa.ServiceRemovePrincipalOptionalArgs{},
 	)

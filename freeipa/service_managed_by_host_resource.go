@@ -69,8 +69,8 @@ func (r *ServiceManagedByHostResource) Configure(ctx context.Context, req resour
 }
 
 func (r *ServiceManagedByHostResource) associationExists(principal, host string) (bool, error) {
-	all := true
-	raw := true
+	pkeyOnly := true
+	noMembers := true
 	principalFilter := principal
 	hosts := []string{host}
 	res, err := r.client.ServiceFind(
@@ -79,8 +79,8 @@ func (r *ServiceManagedByHostResource) associationExists(principal, host string)
 		&ipa.ServiceFindOptionalArgs{
 			Krbcanonicalname: &principalFilter,
 			ManByHost:        &hosts,
-			All:              &all,
-			Raw:              &raw,
+			PkeyOnly:         &pkeyOnly,
+			NoMembers:        &noMembers,
 		},
 	)
 	if err != nil {
@@ -162,8 +162,19 @@ func (r *ServiceManagedByHostResource) Delete(ctx context.Context, req resource.
 	}
 	principal := data.Principal.ValueString()
 	host := data.Host.ValueString()
+	exists, err := r.associationExists(principal, host)
+	if err != nil {
+		if serviceNotFound(err) {
+			return
+		}
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error checking host %s management of FreeIPA service %s before removal: %s", host, principal, err))
+		return
+	}
+	if !exists {
+		return
+	}
 	hosts := []string{host}
-	_, err := r.client.ServiceRemoveHost(
+	_, err = r.client.ServiceRemoveHost(
 		&ipa.ServiceRemoveHostArgs{Krbcanonicalname: principal},
 		&ipa.ServiceRemoveHostOptionalArgs{Host: &hosts},
 	)

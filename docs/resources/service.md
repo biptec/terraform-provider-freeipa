@@ -1,12 +1,12 @@
 ---
 page_title: "freeipa_service Resource - freeipa"
 description: |-
-  FreeIPA Kerberos service principal resource. Manages the service identity and an optional host allowed to manage it. Certificate/private-key material is not stored by this resource.
+  FreeIPA Kerberos service principal resource. Manages only the canonical service identity. Principal aliases and managedBy host memberships are separate resources. Certificate/private-key material is not stored by this resource.
 ---
 
 # freeipa_service (Resource)
 
-FreeIPA Kerberos service principal resource. Manages the service identity and an optional host allowed to manage it. Certificate/private-key material is not stored by this resource.
+FreeIPA Kerberos service principal resource. Manages only the canonical service identity. Principal aliases and `managedBy` host memberships are separate resources so one service can safely have multiple managers. Certificate/private-key material is not stored by this resource.
 
 
 
@@ -21,9 +21,8 @@ FreeIPA Kerberos service principal resource. Manages the service identity and an
 
 ### Optional
 
-- `force` (Boolean) Force service creation when the service hostname is not resolvable in DNS.
-- `managed_by_host` (String) Optional FreeIPA host FQDN allowed to manage this service. Maps to service-add-host / managedBy.
-- `skip_host_check` (Boolean) Allow creation when the service hostname does not correspond to an existing FreeIPA host object.
+- `force` (Boolean) Force service creation when the service hostname is not resolvable in DNS. Changing this creation-time option replaces the Terraform resource.
+- `skip_host_check` (Boolean) Allow creation when the service hostname does not correspond to an existing FreeIPA host object. Changing this creation-time option replaces the Terraform resource.
 
 ### Read-Only
 

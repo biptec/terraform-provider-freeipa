@@ -13,9 +13,13 @@ Associates one FreeIPA host with an existing service's `managedBy` membership. M
 ```terraform
 resource "freeipa_service" "router" {
   principal       = "HTTP/router.central.example.test"
-  managed_by_host = "etna.host.example.test"
   force           = true
   skip_host_check = true
+}
+
+resource "freeipa_service_managed_by_host" "etna" {
+  principal = freeipa_service.router.principal
+  host      = "etna.host.example.test"
 }
 
 resource "freeipa_service_managed_by_host" "rigi" {
