@@ -123,6 +123,14 @@ func serviceExists(client *ipa.Client, principal string) (bool, error) {
 		},
 	)
 	if err != nil {
+		// FreeIPA 4.13 may return Subject=null for a service without a
+		// certificate. go-freeipa v1.2.5 models Subject as required and fails
+		// decoding that record. Because this ServiceFind is scoped to the exact
+		// canonical principal and an empty result decodes normally, this
+		// generated field-decoder error proves the requested service exists.
+		if serviceAddResponseDecodeError(err) {
+			return true, nil
+		}
 		return false, err
 	}
 	for _, service := range res.Result {
