@@ -4,9 +4,12 @@ package freeipa
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	ipa "github.com/infra-monkey/go-freeipa/freeipa"
 )
 
 func TestServiceAssociationSchemas(t *testing.T) {
@@ -59,6 +62,27 @@ func TestNormalizeServicePrincipal(t *testing.T) {
 	}
 	if normalizeServicePrincipal("HTTP/router.central.example.test") != "HTTP/router.central.example.test" {
 		t.Fatal("principal without realm changed unexpectedly")
+	}
+}
+
+func TestServiceHostMembershipMutationError(t *testing.T) {
+	if err := serviceHostMembershipMutationError(1, ipa.FailedOperations{}); err != nil {
+		t.Fatalf("one completed host membership mutation must be accepted: %v", err)
+	}
+
+	var failed ipa.FailedOperations
+	if err := json.Unmarshal([]byte(`{"managedby":{"host":[["baker.host.biptec.net","Insufficient access"]]}}`), &failed); err != nil {
+		t.Fatalf("decode failed membership fixture: %v", err)
+	}
+
+	err := serviceHostMembershipMutationError(0, failed)
+	if err == nil {
+		t.Fatal("zero completed host membership mutations must not be reported as success")
+	}
+	for _, want := range []string{"completed 0", "managedby/host/baker.host.biptec.net", "Insufficient access"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("membership failure %q does not contain %q", err, want)
+		}
 	}
 }
 

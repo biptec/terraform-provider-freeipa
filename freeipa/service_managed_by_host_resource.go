@@ -33,6 +33,13 @@ type ServiceManagedByHostResourceModel struct {
 	Host      types.String `tfsdk:"host"`
 }
 
+func serviceHostMembershipMutationError(completed int, failed ipa.FailedOperations) error {
+	if completed == 1 {
+		return nil
+	}
+	return fmt.Errorf("completed %d membership changes with failures %v", completed, failed.GetFailures())
+}
+
 func (r *ServiceManagedByHostResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_service_managed_by_host"
 }
@@ -120,10 +127,11 @@ func (r *ServiceManagedByHostResource) Create(ctx context.Context, req resource.
 	}
 	if !exists {
 		hosts := []string{host}
-		if _, err := r.client.ServiceAddHost(
+		result, err := r.client.ServiceAddHost(
 			&ipa.ServiceAddHostArgs{Krbcanonicalname: principal},
 			&ipa.ServiceAddHostOptionalArgs{Host: &hosts},
-		); err != nil {
+		)
+		if err != nil {
 			if !serviceAddResponseDecodeError(err) {
 				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error granting host %s management of FreeIPA service %s: %s", host, principal, err))
 				return
@@ -131,6 +139,21 @@ func (r *ServiceManagedByHostResource) Create(ctx context.Context, req resource.
 			committed, verifyErr := r.associationExists(principal, host)
 			if verifyErr != nil || !committed {
 				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("FreeIPA managedBy update for %s -> %s returned an undecodable response (%s) and could not be confirmed: %v", principal, host, err, verifyErr))
+				return
+			}
+		} else if result == nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("FreeIPA managedBy update for %s -> %s returned no result", principal, host))
+			return
+		} else if mutationErr := serviceHostMembershipMutationError(result.Completed, result.Failed); mutationErr != nil {
+			committed, verifyErr := r.associationExists(principal, host)
+			if verifyErr != nil || !committed {
+				resp.Diagnostics.AddError(
+					"Client Error",
+					fmt.Sprintf(
+						"FreeIPA managedBy update for %s -> %s %s and could not be confirmed: %v",
+						principal, host, mutationErr, verifyErr,
+					),
+				)
 				return
 			}
 		}
@@ -188,7 +211,7 @@ func (r *ServiceManagedByHostResource) Delete(ctx context.Context, req resource.
 		return
 	}
 	hosts := []string{host}
-	_, err = r.client.ServiceRemoveHost(
+	result, err := r.client.ServiceRemoveHost(
 		&ipa.ServiceRemoveHostArgs{Krbcanonicalname: principal},
 		&ipa.ServiceRemoveHostOptionalArgs{Host: &hosts},
 	)
@@ -200,6 +223,21 @@ func (r *ServiceManagedByHostResource) Delete(ctx context.Context, req resource.
 		stillExists, verifyErr := r.associationExists(principal, host)
 		if verifyErr != nil || stillExists {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("FreeIPA managedBy removal for %s -> %s returned an undecodable response (%s) and could not be confirmed: %v", principal, host, err, verifyErr))
+		}
+	} else if err == nil && result == nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("FreeIPA managedBy removal for %s -> %s returned no result", principal, host))
+	} else if err == nil {
+		if mutationErr := serviceHostMembershipMutationError(result.Completed, result.Failed); mutationErr != nil {
+			stillExists, verifyErr := r.associationExists(principal, host)
+			if verifyErr != nil || stillExists {
+				resp.Diagnostics.AddError(
+					"Client Error",
+					fmt.Sprintf(
+						"FreeIPA managedBy removal for %s -> %s %s and could not be confirmed: %v",
+						principal, host, mutationErr, verifyErr,
+					),
+				)
+			}
 		}
 	}
 }
