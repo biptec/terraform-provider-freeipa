@@ -78,6 +78,12 @@ type HostResourceModel struct {
 }
 
 func validateHostEnrollmentPasswordCreate(secret types.String, version types.Int64) error {
+	// Unknown values are deferred until apply. In particular, an omitted
+	// Optional+Computed version is unknown in a create plan and is not explicit
+	// enrollment intent.
+	if secret.IsUnknown() || version.IsUnknown() {
+		return nil
+	}
 	if secret.IsNull() {
 		if !version.IsNull() {
 			return fmt.Errorf("userpassword_wo_version is meaningful only with userpassword_wo when creating a host")
@@ -93,8 +99,17 @@ func validateHostEnrollmentPasswordCreate(secret types.String, version types.Int
 	return nil
 }
 
-func hostEnrollmentPasswordRotation(secret types.String, plannedVersion, priorVersion types.Int64) (*string, error) {
-	if plannedVersion.Equal(priorVersion) {
+func hostEnrollmentPasswordRotation(secret types.String, desiredVersion, priorVersion types.Int64) (*string, error) {
+	// A null/unknown desired version means the caller did not express an
+	// explicit rotation intent. Optional+Computed values must not manufacture
+	// a rotation merely because the framework is computing the planned value.
+	if desiredVersion.IsNull() || desiredVersion.IsUnknown() || priorVersion.IsUnknown() {
+		return nil, nil
+	}
+	if desiredVersion.Equal(priorVersion) {
+		return nil, nil
+	}
+	if secret.IsUnknown() {
 		return nil, nil
 	}
 	if secret.IsNull() || secret.ValueString() == "" {
@@ -231,6 +246,7 @@ func (r *HostResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"userpassword_wo_version": schema.Int64Attribute{
 				MarkdownDescription: "Persistent rotation trigger for `userpassword_wo`. Increment this value when setting a new caller-supplied enrollment password on an existing host. Changing the version without supplying `userpassword_wo` fails; the host is never recreated implicitly for OTP rotation.",
 				Optional:            true,
+				Computed:            true,
 			},
 			"random_password": schema.BoolAttribute{
 				MarkdownDescription: "Legacy option that asks FreeIPA to generate a random bulk-enrollment password. The generated value is stateful; prefer caller-supplied `userpassword_wo` for external two-stage enrollment workflows.",
@@ -256,15 +272,14 @@ func (r *HostResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRe
 		return
 	}
 
-	var plan, config HostResourceModel
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	var config HostResourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	if req.State.Raw.IsNull() {
-		if err := validateHostEnrollmentPasswordCreate(config.UserPasswordWO, plan.UserPasswordWOVersion); err != nil {
+		if err := validateHostEnrollmentPasswordCreate(config.UserPasswordWO, config.UserPasswordWOVersion); err != nil {
 			resp.Diagnostics.AddError("Invalid Host Enrollment Password Configuration", err.Error())
 		}
 		return
@@ -276,7 +291,7 @@ func (r *HostResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRe
 		return
 	}
 
-	if _, err := hostEnrollmentPasswordRotation(config.UserPasswordWO, plan.UserPasswordWOVersion, state.UserPasswordWOVersion); err != nil {
+	if _, err := hostEnrollmentPasswordRotation(config.UserPasswordWO, config.UserPasswordWOVersion, state.UserPasswordWOVersion); err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("userpassword_wo"), "Invalid Enrollment Password Rotation", err.Error())
 	}
 }
@@ -314,9 +329,18 @@ func (r *HostResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	if err := validateHostEnrollmentPasswordCreate(config.UserPasswordWO, data.UserPasswordWOVersion); err != nil {
+	if config.UserPasswordWO.IsUnknown() || config.UserPasswordWOVersion.IsUnknown() {
+		resp.Diagnostics.AddError("Invalid Host Enrollment Password Configuration", "userpassword_wo and userpassword_wo_version must be known when applying a host create")
+		return
+	}
+	if err := validateHostEnrollmentPasswordCreate(config.UserPasswordWO, config.UserPasswordWOVersion); err != nil {
 		resp.Diagnostics.AddError("Invalid Host Enrollment Password Configuration", err.Error())
 		return
+	}
+	if config.UserPasswordWOVersion.IsNull() {
+		data.UserPasswordWOVersion = types.Int64Null()
+	} else {
+		data.UserPasswordWOVersion = config.UserPasswordWOVersion
 	}
 
 	optArgs := ipa.HostAddOptionalArgs{}
@@ -712,13 +736,22 @@ func (r *HostResource) Update(ctx context.Context, req resource.UpdateRequest, r
 			optArgs.Ipakrboktoauthasdelegate = &v
 		}
 	}
-	rotationPassword, err := hostEnrollmentPasswordRotation(config.UserPasswordWO, data.UserPasswordWOVersion, state.UserPasswordWOVersion)
+	if config.UserPasswordWO.IsUnknown() || config.UserPasswordWOVersion.IsUnknown() {
+		resp.Diagnostics.AddAttributeError(path.Root("userpassword_wo"), "Invalid Enrollment Password Rotation", "userpassword_wo and userpassword_wo_version must be known when applying a host update")
+		return
+	}
+	rotationPassword, err := hostEnrollmentPasswordRotation(config.UserPasswordWO, config.UserPasswordWOVersion, state.UserPasswordWOVersion)
 	if err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("userpassword_wo"), "Invalid Enrollment Password Rotation", err.Error())
 		return
 	}
 	if rotationPassword != nil {
 		optArgs.Userpassword = rotationPassword
+	}
+	if config.UserPasswordWOVersion.IsNull() {
+		data.UserPasswordWOVersion = state.UserPasswordWOVersion
+	} else {
+		data.UserPasswordWOVersion = config.UserPasswordWOVersion
 	}
 
 	if !data.RandomPassword.Equal(state.RandomPassword) {
