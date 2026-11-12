@@ -57,6 +57,10 @@ func testAccVPNPolicyResourcesConfig(t *testing.T, updated bool) string {
 		"  skip_host_check = false\n" +
 		"  depends_on      = [freeipa_host.issue68]\n" +
 		"}\n\n" +
+		"data \"freeipa_service\" \"issue68\" {\n" +
+		"  principal  = freeipa_service.issue68.principal\n" +
+		"  depends_on = [freeipa_service.issue68]\n" +
+		"}\n\n" +
 		"resource \"freeipa_hbac_service\" \"issue68\" {\n" +
 		"  name        = \"" + vpnPolicyAccHBAC + "\"\n" +
 		"  description = \"Issue 68 HBAC service" + descriptionSuffix + "\"\n" +
@@ -66,6 +70,10 @@ func testAccVPNPolicyResourcesConfig(t *testing.T, updated bool) string {
 		"  description  = \"Issue 68 certificate profile" + descriptionSuffix + "\"\n" +
 		"  store_issued = " + storeIssued + "\n" +
 		"  config       = " + strconv.Quote(profile) + "\n" +
+		"}\n\n" +
+		"data \"freeipa_certprofile\" \"issue68\" {\n" +
+		"  name       = freeipa_certprofile.issue68.name\n" +
+		"  depends_on = [freeipa_certprofile.issue68]\n" +
 		"}\n\n" +
 		"resource \"freeipa_ca_acl\" \"issue68\" {\n" +
 		"  name        = \"" + vpnPolicyAccCAACL + "\"\n" +
@@ -133,6 +141,9 @@ func TestAccVPNPolicyResources(t *testing.T) {
 					resource.TestCheckResourceAttr("freeipa_privilege.issue68", "description", "Issue 68 privilege"),
 					resource.TestCheckResourceAttr("freeipa_role.issue68", "description", "Issue 68 role"),
 					resource.TestCheckResourceAttr("freeipa_ca_acl_service_membership.issue68", "service", vpnPolicyAccService),
+					resource.TestCheckResourceAttrSet("data.freeipa_service.issue68", "dn"),
+					resource.TestCheckResourceAttr("data.freeipa_certprofile.issue68", "description", "Issue 68 certificate profile"),
+					resource.TestCheckResourceAttr("data.freeipa_certprofile.issue68", "store_issued", "false"),
 				),
 			},
 			{

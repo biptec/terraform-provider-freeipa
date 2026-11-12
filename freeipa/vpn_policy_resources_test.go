@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	ipa "github.com/infra-monkey/go-freeipa/freeipa"
 )
@@ -43,6 +44,41 @@ func TestVPNPolicyResourcesRegistered(t *testing.T) {
 	for typeName, found := range want {
 		if !found {
 			t.Errorf("provider does not register %s", typeName)
+		}
+	}
+}
+
+func TestVPNPolicyDataSourcesRegisteredAndSchema(t *testing.T) {
+	ctx := context.Background()
+	provider := &freeipaProvider{}
+	want := map[string][]string{
+		"freeipa_certprofile": {"id", "name", "description", "store_issued", "config"},
+		"freeipa_service":     {"id", "principal", "dn"},
+	}
+	found := map[string]bool{}
+	for _, constructor := range provider.DataSources(ctx) {
+		instance := constructor()
+		var metadata datasource.MetadataResponse
+		instance.Metadata(ctx, datasource.MetadataRequest{ProviderTypeName: "freeipa"}, &metadata)
+		attributes, ok := want[metadata.TypeName]
+		if !ok {
+			continue
+		}
+		found[metadata.TypeName] = true
+		var schemaResp datasource.SchemaResponse
+		instance.Schema(ctx, datasource.SchemaRequest{}, &schemaResp)
+		if schemaResp.Diagnostics.HasError() {
+			t.Fatalf("%s schema diagnostics: %v", metadata.TypeName, schemaResp.Diagnostics)
+		}
+		for _, attr := range attributes {
+			if _, ok := schemaResp.Schema.Attributes[attr]; !ok {
+				t.Errorf("%s missing attribute %q", metadata.TypeName, attr)
+			}
+		}
+	}
+	for typeName := range want {
+		if !found[typeName] {
+			t.Errorf("provider does not register data source %s", typeName)
 		}
 	}
 }
@@ -258,7 +294,7 @@ func TestRawCompatibilityClientLazyPasswordLogin(t *testing.T) {
 }
 
 func TestRawCompatibilityClientDecodesFreeIPA413Responses(t *testing.T) {
-	var sawPermission, sawProfile, sawCAACL bool
+	var sawPermission, sawProfile, sawCAACL, sawService bool
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/ipa/session/json" {
 			http.NotFound(w, r)
@@ -322,6 +358,17 @@ func TestRawCompatibilityClientDecodesFreeIPA413Responses(t *testing.T) {
 					},
 				},
 			})
+		case "service_show":
+			sawService = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": nil,
+				"result": map[string]any{
+					"result": map[string]any{
+						"krbcanonicalname": []any{"VPN/pizol.example.test@EXAMPLE.TEST"},
+						"dn":               []any{"krbprincipalname=VPN/pizol.example.test@EXAMPLE.TEST,cn=services,cn=accounts,dc=example,dc=test"},
+					},
+				},
+			})
 		default:
 			t.Fatalf("unexpected method %q", method)
 		}
@@ -368,7 +415,15 @@ func TestRawCompatibilityClientDecodesFreeIPA413Responses(t *testing.T) {
 	if !stringSliceContainsServicePrincipal(acl.Services, "VPN/two.example.test") {
 		t.Fatalf("CA ACL services missing realm-normalized principal: %#v", acl.Services)
 	}
-	if !sawPermission || !sawProfile || !sawCAACL {
-		t.Fatalf("expected all compatibility methods, permission=%v profile=%v caacl=%v", sawPermission, sawProfile, sawCAACL)
+	service, err := client.serviceShow("VPN/pizol.example.test")
+	if err != nil {
+		t.Fatalf("serviceShow: %v", err)
+	}
+	if service.DN != "krbprincipalname=VPN/pizol.example.test@EXAMPLE.TEST,cn=services,cn=accounts,dc=example,dc=test" {
+		t.Fatalf("unexpected service DN %q", service.DN)
+	}
+
+	if !sawPermission || !sawProfile || !sawCAACL || !sawService {
+		t.Fatalf("expected all compatibility methods, permission=%v profile=%v caacl=%v service=%v", sawPermission, sawProfile, sawCAACL, sawService)
 	}
 }

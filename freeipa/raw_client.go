@@ -408,6 +408,30 @@ func (c *rawFreeIPAClient) certprofileDel(name string) error {
 	return c.call("certprofile_del", map[string]any{"cn": []string{name}}, nil)
 }
 
+type rawService struct {
+	DN string
+}
+
+func (c *rawFreeIPAClient) serviceShow(principal string) (*rawService, error) {
+	var result map[string]any
+	if err := c.call("service_show", map[string]any{
+		"krbcanonicalname": principal,
+		"all":              true,
+		"raw":              true,
+	}, &result); err != nil {
+		return nil, err
+	}
+	record, ok := result["result"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected service_show result type %T", result["result"])
+	}
+	dn := rawString(record["dn"])
+	if dn == "" {
+		return nil, fmt.Errorf("FreeIPA service %q did not return dn metadata", principal)
+	}
+	return &rawService{DN: dn}, nil
+}
+
 type rawCAACL struct {
 	Name            string
 	Description     string
