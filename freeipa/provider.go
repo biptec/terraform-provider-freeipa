@@ -265,6 +265,14 @@ func (p *freeipaProvider) Configure(ctx context.Context, req provider.ConfigureR
 		return
 	}
 
+	// FreeIPA 4.13 can return JSON values that violate go-freeipa v1.2.5's
+	// generated schema for a small number of methods (notably permission_show
+	// returning aci=null). Register the provider configuration for a lazy
+	// compatibility JSON-RPC client. Existing resources keep the exact previous
+	// authentication behavior; the extra client is initialized only by resources
+	// that need tolerant decoding.
+	registerRawFreeIPAClientConfig(client, &config)
+
 	// Make the FreeIPA client available during DataSource and Resource
 	// type Configure methods.
 	resp.DataSourceData = client
@@ -414,6 +422,17 @@ func (p *freeipaProvider) Resources(ctx context.Context) []func() resource.Resou
 		NewSudoRuleRunAsUserMembershipResource,
 		NewSudoRuleUserMembershipResource,
 		NewHbacPolicyResource,
+		NewHbacServiceResource,
+		NewCertprofileResource,
+		NewCAACLResource,
+		NewCAACLProfileMembershipResource,
+		NewCAACLServiceMembershipResource,
+		NewPermissionResource,
+		NewPrivilegeResource,
+		NewPrivilegePermissionMembershipResource,
+		NewRoleResource,
+		NewRolePrivilegeMembershipResource,
+		NewRoleHostMembershipResource,
 		NewHbacPolicyHostMembershipResource,
 		NewHbacPolicyUserMembershipResource,
 		NewHbacPolicyServiceMembershipResource,
