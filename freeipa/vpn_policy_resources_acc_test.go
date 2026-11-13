@@ -117,6 +117,16 @@ func testAccVPNPolicyResourcesConfig(t *testing.T, updated bool) string {
 		"  role = freeipa_role.issue68.name\n" +
 		"  host = \"" + vpnPolicyAccHost + "\"\n" +
 		"  depends_on = [freeipa_host.issue68]\n" +
+		"}\n\n" +
+		"resource \"freeipa_role_service_membership\" \"issue68\" {\n" +
+		"  role    = freeipa_role.issue68.name\n" +
+		"  service = \"" + vpnPolicyAccService + "\"\n" +
+		"  depends_on = [freeipa_service.issue68]\n" +
+		"}\n\n" +
+		"resource \"freeipa_service_keytab_host\" \"issue68\" {\n" +
+		"  principal = \"" + vpnPolicyAccService + "\"\n" +
+		"  host      = \"" + vpnPolicyAccHost + "\"\n" +
+		"  depends_on = [freeipa_service.issue68, freeipa_host.issue68]\n" +
 		"}\n"
 }
 
@@ -141,6 +151,9 @@ func TestAccVPNPolicyResources(t *testing.T) {
 					resource.TestCheckResourceAttr("freeipa_privilege.issue68", "description", "Issue 68 privilege"),
 					resource.TestCheckResourceAttr("freeipa_role.issue68", "description", "Issue 68 role"),
 					resource.TestCheckResourceAttr("freeipa_ca_acl_service_membership.issue68", "service", vpnPolicyAccService),
+					resource.TestCheckResourceAttr("freeipa_role_service_membership.issue68", "service", vpnPolicyAccService),
+					resource.TestCheckResourceAttr("freeipa_service_keytab_host.issue68", "principal", vpnPolicyAccService),
+					resource.TestCheckResourceAttr("freeipa_service_keytab_host.issue68", "host", vpnPolicyAccHost),
 					resource.TestCheckResourceAttrSet("data.freeipa_service.issue68", "dn"),
 					resource.TestCheckResourceAttr("data.freeipa_certprofile.issue68", "description", "Issue 68 certificate profile"),
 					resource.TestCheckResourceAttr("data.freeipa_certprofile.issue68", "store_issued", "false"),
@@ -217,6 +230,18 @@ func TestAccVPNPolicyResources(t *testing.T) {
 				ResourceName:      "freeipa_role_host_membership.issue68",
 				ImportState:       true,
 				ImportStateId:     vpnPolicyAccRole + "/" + vpnPolicyAccHost,
+				ImportStateVerify: true,
+			},
+			{
+				ResourceName:      "freeipa_role_service_membership.issue68",
+				ImportState:       true,
+				ImportStateId:     vpnPolicyAccRole + "/ISSUE68%2Fissue68-policy.ipatest.lan",
+				ImportStateVerify: true,
+			},
+			{
+				ResourceName:      "freeipa_service_keytab_host.issue68",
+				ImportState:       true,
+				ImportStateId:     "ISSUE68%2Fissue68-policy.ipatest.lan|" + vpnPolicyAccHost,
 				ImportStateVerify: true,
 			},
 			{

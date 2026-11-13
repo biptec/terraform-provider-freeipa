@@ -32,6 +32,8 @@ func TestVPNPolicyResourcesRegistered(t *testing.T) {
 		"freeipa_role":                            false,
 		"freeipa_role_privilege_membership":       false,
 		"freeipa_role_host_membership":            false,
+		"freeipa_role_service_membership":         false,
+		"freeipa_service_keytab_host":             false,
 	}
 	for _, constructor := range provider.Resources(ctx) {
 		instance := constructor()
@@ -102,6 +104,8 @@ func TestVPNPolicyResourceSchemas(t *testing.T) {
 		{"role", NewRoleResource, "freeipa_role", []string{"id", "name", "description"}},
 		{"role privilege membership", NewRolePrivilegeMembershipResource, "freeipa_role_privilege_membership", []string{"id", "role", "privilege"}},
 		{"role host membership", NewRoleHostMembershipResource, "freeipa_role_host_membership", []string{"id", "role", "host"}},
+		{"role service membership", NewRoleServiceMembershipResource, "freeipa_role_service_membership", []string{"id", "role", "service"}},
+		{"service keytab host", NewServiceKeytabHostResource, "freeipa_service_keytab_host", []string{"id", "principal", "host"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -146,6 +150,92 @@ func TestParsePolicyMembershipIDRejectsInvalidID(t *testing.T) {
 		if _, _, err := parsePolicyMembershipID(id); err == nil {
 			t.Errorf("expected %q to be rejected", id)
 		}
+	}
+}
+
+func TestCreatePolicyMembershipRejectsFreeIPAFalseSuccess(t *testing.T) {
+	var failed ipa.FailedOperations
+	if err := json.Unmarshal(
+		[]byte(`{"member":{"privilege":[["VPN Certificate Management","Insufficient access"]]}}`),
+		&failed,
+	); err != nil {
+		t.Fatalf("decode failed operations: %v", err)
+	}
+
+	verifyCalled := false
+	err := createPolicyMembership(
+		"role",
+		"VPN Certificate Manager",
+		"privilege",
+		"VPN Certificate Management",
+		func() (int, ipa.FailedOperations, error) {
+			return 0, failed, nil
+		},
+		func() (bool, error) {
+			verifyCalled = true
+			return false, nil
+		},
+	)
+	if err == nil {
+		t.Fatal("completed=0 membership mutation must not be reported as success")
+	}
+	if verifyCalled {
+		t.Fatal("read-back must not run after FreeIPA reports a failed/no-op create mutation")
+	}
+	for _, want := range []string{"completed 0", "VPN Certificate Management", "Insufficient access"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("false-success error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestCreatePolicyMembershipRequiresReadBackPostcondition(t *testing.T) {
+	err := createPolicyMembership(
+		"role",
+		"VPN Certificate Manager",
+		"privilege",
+		"VPN Certificate Management",
+		func() (int, ipa.FailedOperations, error) {
+			return 1, nil, nil
+		},
+		func() (bool, error) {
+			return false, nil
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "membership is absent on read-back") {
+		t.Fatalf("missing read-back postcondition must fail, got %v", err)
+	}
+}
+
+func TestCreatePolicyMembershipAcceptsVerifiedMutation(t *testing.T) {
+	err := createPolicyMembership(
+		"role",
+		"VPN Certificate Manager",
+		"service",
+		"VPN/pizol.host.biptec.net",
+		func() (int, ipa.FailedOperations, error) {
+			return 1, nil, nil
+		},
+		func() (bool, error) {
+			return true, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("verified membership mutation must succeed: %v", err)
+	}
+}
+
+func TestDeletePolicyMembershipRequiresAbsenceOnReadBack(t *testing.T) {
+	err := deletePolicyMembership(
+		"role",
+		"VPN Certificate Manager",
+		"host",
+		"pizol.host.biptec.net",
+		func() error { return nil },
+		func() (bool, error) { return true, nil },
+	)
+	if err == nil || !strings.Contains(err.Error(), "still a member") {
+		t.Fatalf("delete must fail while membership remains, got %v", err)
 	}
 }
 

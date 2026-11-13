@@ -413,7 +413,9 @@ func (c *rawFreeIPAClient) certprofileDel(name string) error {
 }
 
 type rawService struct {
-	DN string
+	DN                   string
+	AllowedRetrieveHosts []string
+	AllowedCreateHosts   []string
 }
 
 func (c *rawFreeIPAClient) serviceShow(principal string) (*rawService, error) {
@@ -433,7 +435,30 @@ func (c *rawFreeIPAClient) serviceShow(principal string) (*rawService, error) {
 	if dn == "" {
 		return nil, fmt.Errorf("FreeIPA service %q did not return dn metadata", principal)
 	}
-	return &rawService{DN: dn}, nil
+	return &rawService{
+		DN:                   dn,
+		AllowedRetrieveHosts: rawStrings(record["ipaallowedtoperform_read_keys_host"]),
+		AllowedCreateHosts:   rawStrings(record["ipaallowedtoperform_write_keys_host"]),
+	}, nil
+}
+
+func (c *rawFreeIPAClient) serviceKeytabAccessShow(principal string) (*rawService, error) {
+	var result map[string]any
+	if err := c.call("service_show", map[string]any{
+		"krbcanonicalname": principal,
+		"all":              true,
+	}, &result); err != nil {
+		return nil, err
+	}
+	record, ok := result["result"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected service_show result type %T", result["result"])
+	}
+	return &rawService{
+		DN:                   rawString(record["dn"]),
+		AllowedRetrieveHosts: rawStrings(record["ipaallowedtoperform_read_keys_host"]),
+		AllowedCreateHosts:   rawStrings(record["ipaallowedtoperform_write_keys_host"]),
+	}, nil
 }
 
 type rawCAACL struct {
