@@ -301,11 +301,15 @@ func (c *freeipaProvider) NewFreeIPAClient(ctx context.Context, conf *freeipaPro
 	}
 
 	// If RootCAs is nil, TLS uses the host's root CA set
-	tspt := &http.Transport{
+	baseTransport := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: conf.InsecureSkipVerify.ValueBool(),
 			RootCAs:            caCertPool,
 		},
+	}
+	var tspt http.RoundTripper = baseTransport
+	if kerberosConfigured(conf) {
+		tspt = &kerberosLoginRetryTransport{base: baseTransport}
 	}
 
 	var client *ipa.Client
