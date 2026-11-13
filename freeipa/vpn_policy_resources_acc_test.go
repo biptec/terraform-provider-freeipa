@@ -14,14 +14,15 @@ import (
 )
 
 const (
-	vpnPolicyAccHost       = "issue68-policy.ipatest.lan"
-	vpnPolicyAccService    = "ISSUE68/issue68-policy.ipatest.lan"
-	vpnPolicyAccProfile    = "Issue68ProviderProfileAcc"
-	vpnPolicyAccCAACL      = "issue68-provider-ca-acl-acc"
-	vpnPolicyAccHBAC       = "issue68-provider-hbac-acc"
-	vpnPolicyAccPermission = "issue68-provider-permission-acc"
-	vpnPolicyAccPrivilege  = "issue68-provider-privilege-acc"
-	vpnPolicyAccRole       = "issue68-provider-role-acc"
+	vpnPolicyAccHost            = "issue68-policy.ipatest.lan"
+	vpnPolicyAccService         = "ISSUE68/issue68-policy.ipatest.lan"
+	vpnPolicyAccProfile         = "Issue68ProviderProfileAcc"
+	vpnPolicyAccCAACL           = "issue68-provider-ca-acl-acc"
+	vpnPolicyAccHBAC            = "issue68-provider-hbac-acc"
+	vpnPolicyAccPermission      = "issue68-provider-permission-acc"
+	vpnPolicyAccAdminPermission = "issue68-provider-admin-permission-acc"
+	vpnPolicyAccPrivilege       = "issue68-provider-privilege-acc"
+	vpnPolicyAccRole            = "issue68-provider-role-acc"
 )
 
 func testAccVPNPolicyResourcesConfig(t *testing.T, updated bool) string {
@@ -97,6 +98,14 @@ func testAccVPNPolicyResourcesConfig(t *testing.T, updated bool) string {
 		"  target              = \"" + targetDN + "\"\n" +
 		"  depends_on          = [freeipa_host.issue68]\n" +
 		"}\n\n" +
+		"resource \"freeipa_permission\" \"issue68_admin\" {\n" +
+		"  name                = \"" + vpnPolicyAccAdminPermission + "\"\n" +
+		"  description         = \"Issue 68 admin certificate permission" + descriptionSuffix + "\"\n" +
+		"  rights              = [\"write\"]\n" +
+		"  included_attributes = [\"usercertificate\"]\n" +
+		"  object_type         = \"user\"\n" +
+		"  member_of           = [\"admins\"]\n" +
+		"}\n\n" +
 		"resource \"freeipa_privilege\" \"issue68\" {\n" +
 		"  name        = \"" + vpnPolicyAccPrivilege + "\"\n" +
 		"  description = \"Issue 68 privilege" + descriptionSuffix + "\"\n" +
@@ -148,6 +157,11 @@ func TestAccVPNPolicyResources(t *testing.T) {
 					resource.TestCheckResourceAttr("freeipa_permission.issue68", "description", "Issue 68 permission"),
 					resource.TestCheckResourceAttr("freeipa_permission.issue68", "rights.#", "1"),
 					resource.TestCheckResourceAttr("freeipa_permission.issue68", "included_attributes.#", "1"),
+					resource.TestCheckResourceAttr("freeipa_permission.issue68_admin", "description", "Issue 68 admin certificate permission"),
+					resource.TestCheckResourceAttr("freeipa_permission.issue68_admin", "object_type", "user"),
+					resource.TestCheckResourceAttr("freeipa_permission.issue68_admin", "member_of.#", "1"),
+					resource.TestCheckResourceAttr("freeipa_permission.issue68_admin", "member_of.0", "admins"),
+					resource.TestCheckResourceAttr("freeipa_permission.issue68_admin", "included_attributes.#", "1"),
 					resource.TestCheckResourceAttr("freeipa_privilege.issue68", "description", "Issue 68 privilege"),
 					resource.TestCheckResourceAttr("freeipa_role.issue68", "description", "Issue 68 role"),
 					resource.TestCheckResourceAttr("freeipa_ca_acl_service_membership.issue68", "service", vpnPolicyAccService),
@@ -200,6 +214,12 @@ func TestAccVPNPolicyResources(t *testing.T) {
 				ResourceName:      "freeipa_permission.issue68",
 				ImportState:       true,
 				ImportStateId:     vpnPolicyAccPermission,
+				ImportStateVerify: true,
+			},
+			{
+				ResourceName:      "freeipa_permission.issue68_admin",
+				ImportState:       true,
+				ImportStateId:     vpnPolicyAccAdminPermission,
 				ImportStateVerify: true,
 			},
 			{
