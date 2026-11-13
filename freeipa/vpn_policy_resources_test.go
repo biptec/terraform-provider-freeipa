@@ -484,6 +484,13 @@ func TestRawCompatibilityClientDecodesFreeIPA413Responses(t *testing.T) {
 		switch method {
 		case "permission_show":
 			sawPermission = true
+			if len(params) != 2 {
+				t.Fatalf("unexpected params length: %d", len(params))
+			}
+			kwargs, _ := params[1].(map[string]any)
+			if raw, ok := kwargs["raw"].(bool); !ok || raw {
+				t.Fatalf("permission_show must keep virtual targeting enabled, got raw=%#v", kwargs["raw"])
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"error": nil,
 				"result": map[string]any{

@@ -279,7 +279,11 @@ func (c *rawFreeIPAClient) permissionShow(name string) (*rawPermission, error) {
 	var result struct {
 		Result map[string]any `json:"result"`
 	}
-	if err := c.call("permission_show", map[string]any{"cn": name, "all": true, "raw": true}, &result); err != nil {
+	// type and memberof are FreeIPA virtual attributes reconstructed from
+	// ipapermlocation/ipapermtargetfilter only in non-raw permission_show output.
+	// Request all attributes but keep server-side post-processing enabled so
+	// Terraform can round-trip convenience targeting without perpetual drift.
+	if err := c.call("permission_show", map[string]any{"cn": name, "all": true, "raw": false}, &result); err != nil {
 		return nil, err
 	}
 	record := result.Result
