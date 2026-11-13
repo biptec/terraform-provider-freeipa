@@ -78,11 +78,15 @@ func newRawFreeIPAClient(conf *freeipaProviderModel) (*rawFreeIPAClient, error) 
 			return nil, fmt.Errorf("failed to load FreeIPA CA certificate %s", conf.CaCertificate.ValueString())
 		}
 	}
-	transport := &http.Transport{
+	baseTransport := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: conf.InsecureSkipVerify.ValueBool(),
 			RootCAs:            roots,
 		},
+	}
+	var transport http.RoundTripper = baseTransport
+	if kerberosConfigured(conf) {
+		transport = &kerberosLoginRetryTransport{base: baseTransport}
 	}
 	jar, err := cookiejar.New(nil)
 	if err != nil {
