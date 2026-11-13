@@ -241,7 +241,7 @@ func TestAccVPNPolicyResources(t *testing.T) {
 			{
 				ResourceName:      "freeipa_service_keytab_host.issue68",
 				ImportState:       true,
-				ImportStateId:     "ISSUE68%2Fissue68-policy.ipatest.lan|" + vpnPolicyAccHost,
+				ImportStateId:     vpnPolicyAccService + "|" + vpnPolicyAccHost,
 				ImportStateVerify: true,
 			},
 			{
