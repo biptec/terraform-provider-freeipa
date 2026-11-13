@@ -240,6 +240,8 @@ type rawPermission struct {
 	Rights             []string
 	IncludedAttributes []string
 	Target             string
+	ObjectType         string
+	MemberOf           []string
 }
 
 func rawString(value any) string {
@@ -291,33 +293,38 @@ func (c *rawFreeIPAClient) permissionShow(name string) (*rawPermission, error) {
 		Rights:             rawStrings(record["ipapermright"]),
 		IncludedAttributes: attrs,
 		Target:             rawString(record["ipapermtarget"]),
+		ObjectType:         rawString(record["type"]),
+		MemberOf:           rawStrings(record["memberof"]),
 	}, nil
 }
 
-func (c *rawFreeIPAClient) permissionAdd(permission rawPermission) error {
+func permissionKwargs(permission rawPermission) map[string]any {
 	kwargs := map[string]any{
-		"cn":            permission.Name,
-		"ipapermright":  permission.Rights,
-		"attrs":         permission.IncludedAttributes,
-		"ipapermtarget": permission.Target,
+		"cn":           permission.Name,
+		"ipapermright": permission.Rights,
+		"attrs":        permission.IncludedAttributes,
+	}
+	if permission.Target != "" {
+		kwargs["ipapermtarget"] = permission.Target
+	}
+	if permission.ObjectType != "" {
+		kwargs["type"] = permission.ObjectType
+	}
+	if len(permission.MemberOf) != 0 {
+		kwargs["memberof"] = permission.MemberOf
 	}
 	if permission.Description != "" {
 		kwargs["setattr"] = []string{"description=" + permission.Description}
 	}
-	return c.call("permission_add", kwargs, nil)
+	return kwargs
+}
+
+func (c *rawFreeIPAClient) permissionAdd(permission rawPermission) error {
+	return c.call("permission_add", permissionKwargs(permission), nil)
 }
 
 func (c *rawFreeIPAClient) permissionMod(permission rawPermission) error {
-	kwargs := map[string]any{
-		"cn":            permission.Name,
-		"ipapermright":  permission.Rights,
-		"attrs":         permission.IncludedAttributes,
-		"ipapermtarget": permission.Target,
-	}
-	if permission.Description != "" {
-		kwargs["setattr"] = []string{"description=" + permission.Description}
-	}
-	return c.call("permission_mod", kwargs, nil)
+	return c.call("permission_mod", permissionKwargs(permission), nil)
 }
 
 func (c *rawFreeIPAClient) permissionDel(name string) error {

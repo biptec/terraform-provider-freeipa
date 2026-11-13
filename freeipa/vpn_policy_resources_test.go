@@ -14,6 +14,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	ipa "github.com/infra-monkey/go-freeipa/freeipa"
 )
 
@@ -98,7 +99,7 @@ func TestVPNPolicyResourceSchemas(t *testing.T) {
 		{"CA ACL", NewCAACLResource, "freeipa_ca_acl", []string{"id", "name", "description", "enabled", "ca_category", "profile_category", "user_category", "host_category", "service_category"}},
 		{"CA ACL profile membership", NewCAACLProfileMembershipResource, "freeipa_ca_acl_profile_membership", []string{"id", "ca_acl", "profile"}},
 		{"CA ACL service membership", NewCAACLServiceMembershipResource, "freeipa_ca_acl_service_membership", []string{"id", "ca_acl", "service"}},
-		{"permission", NewPermissionResource, "freeipa_permission", []string{"id", "name", "description", "rights", "included_attributes", "target"}},
+		{"permission", NewPermissionResource, "freeipa_permission", []string{"id", "name", "description", "rights", "included_attributes", "target", "object_type", "member_of"}},
 		{"privilege", NewPrivilegeResource, "freeipa_privilege", []string{"id", "name", "description"}},
 		{"privilege permission membership", NewPrivilegePermissionMembershipResource, "freeipa_privilege_permission_membership", []string{"id", "privilege", "permission"}},
 		{"role", NewRoleResource, "freeipa_role", []string{"id", "name", "description"}},
@@ -150,6 +151,89 @@ func TestParsePolicyMembershipIDRejectsInvalidID(t *testing.T) {
 		if _, _, err := parsePolicyMembershipID(id); err == nil {
 			t.Errorf("expected %q to be rejected", id)
 		}
+	}
+}
+
+func TestPermissionFromModelSupportsMemberOfTargeting(t *testing.T) {
+	ctx := context.Background()
+	rights, diags := types.SetValueFrom(ctx, types.StringType, []string{"write"})
+	if diags.HasError() {
+		t.Fatalf("rights: %v", diags)
+	}
+	attrs, diags := types.SetValueFrom(ctx, types.StringType, []string{"userCertificate"})
+	if diags.HasError() {
+		t.Fatalf("attrs: %v", diags)
+	}
+	memberOf, diags := types.SetValueFrom(ctx, types.StringType, []string{"admins"})
+	if diags.HasError() {
+		t.Fatalf("member_of: %v", diags)
+	}
+
+	permission, err := permissionFromModel(ctx, &PermissionResourceModel{
+		Name:               types.StringValue("VPN Manage Admin User Certificates"),
+		Description:        types.StringValue("Access Gateway admin VPN certificate write"),
+		Rights:             rights,
+		IncludedAttributes: attrs,
+		Target:             types.StringNull(),
+		ObjectType:         types.StringValue("user"),
+		MemberOf:           memberOf,
+	})
+	if err != nil {
+		t.Fatalf("memberOf permission: %v", err)
+	}
+	if permission.Target != "" || permission.ObjectType != "user" || len(permission.MemberOf) != 1 || permission.MemberOf[0] != "admins" {
+		t.Fatalf("unexpected memberOf permission: %#v", permission)
+	}
+	kwargs := permissionKwargs(permission)
+	if kwargs["type"] != "user" {
+		t.Fatalf("permission type missing from kwargs: %#v", kwargs)
+	}
+	groups, ok := kwargs["memberof"].([]string)
+	if !ok || len(groups) != 1 || groups[0] != "admins" {
+		t.Fatalf("permission memberof missing from kwargs: %#v", kwargs)
+	}
+	if _, exists := kwargs["ipapermtarget"]; exists {
+		t.Fatalf("memberOf permission must not send explicit target DN: %#v", kwargs)
+	}
+}
+
+func TestPermissionFromModelRejectsAmbiguousTargeting(t *testing.T) {
+	ctx := context.Background()
+	rights, _ := types.SetValueFrom(ctx, types.StringType, []string{"write"})
+	attrs, _ := types.SetValueFrom(ctx, types.StringType, []string{"userCertificate"})
+	memberOf, _ := types.SetValueFrom(ctx, types.StringType, []string{"admins"})
+
+	_, err := permissionFromModel(ctx, &PermissionResourceModel{
+		Name:               types.StringValue("bad"),
+		Description:        types.StringValue("bad"),
+		Rights:             rights,
+		IncludedAttributes: attrs,
+		Target:             types.StringValue("uid=admin,cn=users,cn=accounts,dc=example,dc=test"),
+		ObjectType:         types.StringValue("user"),
+		MemberOf:           memberOf,
+	})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("ambiguous permission target must be rejected, got %v", err)
+	}
+}
+
+func TestPermissionFromModelRequiresObjectTypeForMemberOf(t *testing.T) {
+	ctx := context.Background()
+	rights, _ := types.SetValueFrom(ctx, types.StringType, []string{"write"})
+	attrs, _ := types.SetValueFrom(ctx, types.StringType, []string{"userCertificate"})
+	memberOf, _ := types.SetValueFrom(ctx, types.StringType, []string{"admins"})
+
+	_, err := permissionFromModel(ctx, &PermissionResourceModel{
+		Name:               types.StringValue("bad"),
+		Description:        types.StringValue("bad"),
+		Rights:             rights,
+		IncludedAttributes: attrs,
+		Target:             types.StringNull(),
+		ObjectType:         types.StringNull(),
+		MemberOf:           memberOf,
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires object_type") {
+		t.Fatalf("member_of without object_type must be rejected, got %v", err)
 	}
 }
 
