@@ -51,7 +51,7 @@ jobs:
           docker logs "${{ job.services.ipa.id }}"
           echo "Waiting for FreeIPA Server to initialize"
           while [ "$(docker logs --tail 1 ${{ job.services.ipa.id }})" != "FreeIPA server configured." ] ; do docker logs --tail 1 ${{ job.services.ipa.id }} ; echo "FreeIPA server not ready. Waiting another 30s." ; sleep 30 ; done
-          go test -v -cover ./freeipa/
+          go test -v -cover -timeout 20m ./freeipa/
         env:
           TF_ACC: "1"
           FREEIPA_HOST: "ipa.ipatest.lan"
