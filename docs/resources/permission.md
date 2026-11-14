@@ -1,12 +1,12 @@
 ---
 page_title: "freeipa_permission Resource - freeipa"
 description: |-
-  FreeIPA permission resource. Manages the permission identity, owner description, granted rights, included attributes and explicit target DN.
+  FreeIPA permission resource. Supports either an explicit target DN or FreeIPA object-type/memberOf targeting. Raw LDAP target filters are intentionally not exposed.
 ---
 
 # freeipa_permission (Resource)
 
-FreeIPA permission resource. Manages the permission identity, owner description, granted rights, included attributes and explicit target DN.
+FreeIPA permission resource. Supports either an explicit target DN or FreeIPA object-type/memberOf targeting. Raw LDAP target filters are intentionally not exposed.
 
 
 
@@ -21,7 +21,12 @@ FreeIPA permission resource. Manages the permission identity, owner description,
 - `included_attributes` (Set of String)
 - `name` (String)
 - `rights` (Set of String)
-- `target` (String)
+
+### Optional
+
+- `member_of` (Set of String) FreeIPA groups whose members are targeted. Requires object_type and is mutually exclusive with target.
+- `object_type` (String) FreeIPA object type used to derive subtree and objectClass target filters, for example user.
+- `target` (String) Explicit target DN. Mutually exclusive with object_type/member_of targeting.
 
 ### Read-Only
 

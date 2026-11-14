@@ -14,6 +14,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	ipa "github.com/infra-monkey/go-freeipa/freeipa"
 )
 
@@ -32,6 +33,8 @@ func TestVPNPolicyResourcesRegistered(t *testing.T) {
 		"freeipa_role":                            false,
 		"freeipa_role_privilege_membership":       false,
 		"freeipa_role_host_membership":            false,
+		"freeipa_role_service_membership":         false,
+		"freeipa_service_keytab_host":             false,
 	}
 	for _, constructor := range provider.Resources(ctx) {
 		instance := constructor()
@@ -96,12 +99,14 @@ func TestVPNPolicyResourceSchemas(t *testing.T) {
 		{"CA ACL", NewCAACLResource, "freeipa_ca_acl", []string{"id", "name", "description", "enabled", "ca_category", "profile_category", "user_category", "host_category", "service_category"}},
 		{"CA ACL profile membership", NewCAACLProfileMembershipResource, "freeipa_ca_acl_profile_membership", []string{"id", "ca_acl", "profile"}},
 		{"CA ACL service membership", NewCAACLServiceMembershipResource, "freeipa_ca_acl_service_membership", []string{"id", "ca_acl", "service"}},
-		{"permission", NewPermissionResource, "freeipa_permission", []string{"id", "name", "description", "rights", "included_attributes", "target"}},
+		{"permission", NewPermissionResource, "freeipa_permission", []string{"id", "name", "description", "rights", "included_attributes", "target", "object_type", "member_of"}},
 		{"privilege", NewPrivilegeResource, "freeipa_privilege", []string{"id", "name", "description"}},
 		{"privilege permission membership", NewPrivilegePermissionMembershipResource, "freeipa_privilege_permission_membership", []string{"id", "privilege", "permission"}},
 		{"role", NewRoleResource, "freeipa_role", []string{"id", "name", "description"}},
 		{"role privilege membership", NewRolePrivilegeMembershipResource, "freeipa_role_privilege_membership", []string{"id", "role", "privilege"}},
 		{"role host membership", NewRoleHostMembershipResource, "freeipa_role_host_membership", []string{"id", "role", "host"}},
+		{"role service membership", NewRoleServiceMembershipResource, "freeipa_role_service_membership", []string{"id", "role", "service"}},
+		{"service keytab host", NewServiceKeytabHostResource, "freeipa_service_keytab_host", []string{"id", "principal", "host"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -146,6 +151,175 @@ func TestParsePolicyMembershipIDRejectsInvalidID(t *testing.T) {
 		if _, _, err := parsePolicyMembershipID(id); err == nil {
 			t.Errorf("expected %q to be rejected", id)
 		}
+	}
+}
+
+func TestPermissionFromModelSupportsMemberOfTargeting(t *testing.T) {
+	ctx := context.Background()
+	rights, diags := types.SetValueFrom(ctx, types.StringType, []string{"write"})
+	if diags.HasError() {
+		t.Fatalf("rights: %v", diags)
+	}
+	attrs, diags := types.SetValueFrom(ctx, types.StringType, []string{"userCertificate"})
+	if diags.HasError() {
+		t.Fatalf("attrs: %v", diags)
+	}
+	memberOf, diags := types.SetValueFrom(ctx, types.StringType, []string{"admins"})
+	if diags.HasError() {
+		t.Fatalf("member_of: %v", diags)
+	}
+
+	permission, err := permissionFromModel(ctx, &PermissionResourceModel{
+		Name:               types.StringValue("VPN Manage Admin User Certificates"),
+		Description:        types.StringValue("Access Gateway admin VPN certificate write"),
+		Rights:             rights,
+		IncludedAttributes: attrs,
+		Target:             types.StringNull(),
+		ObjectType:         types.StringValue("user"),
+		MemberOf:           memberOf,
+	})
+	if err != nil {
+		t.Fatalf("memberOf permission: %v", err)
+	}
+	if permission.Target != "" || permission.ObjectType != "user" || len(permission.MemberOf) != 1 || permission.MemberOf[0] != "admins" {
+		t.Fatalf("unexpected memberOf permission: %#v", permission)
+	}
+	kwargs := permissionKwargs(permission)
+	if kwargs["type"] != "user" {
+		t.Fatalf("permission type missing from kwargs: %#v", kwargs)
+	}
+	groups, ok := kwargs["memberof"].([]string)
+	if !ok || len(groups) != 1 || groups[0] != "admins" {
+		t.Fatalf("permission memberof missing from kwargs: %#v", kwargs)
+	}
+	if _, exists := kwargs["ipapermtarget"]; exists {
+		t.Fatalf("memberOf permission must not send explicit target DN: %#v", kwargs)
+	}
+}
+
+func TestPermissionFromModelRejectsAmbiguousTargeting(t *testing.T) {
+	ctx := context.Background()
+	rights, _ := types.SetValueFrom(ctx, types.StringType, []string{"write"})
+	attrs, _ := types.SetValueFrom(ctx, types.StringType, []string{"userCertificate"})
+	memberOf, _ := types.SetValueFrom(ctx, types.StringType, []string{"admins"})
+
+	_, err := permissionFromModel(ctx, &PermissionResourceModel{
+		Name:               types.StringValue("bad"),
+		Description:        types.StringValue("bad"),
+		Rights:             rights,
+		IncludedAttributes: attrs,
+		Target:             types.StringValue("uid=admin,cn=users,cn=accounts,dc=example,dc=test"),
+		ObjectType:         types.StringValue("user"),
+		MemberOf:           memberOf,
+	})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("ambiguous permission target must be rejected, got %v", err)
+	}
+}
+
+func TestPermissionFromModelRequiresObjectTypeForMemberOf(t *testing.T) {
+	ctx := context.Background()
+	rights, _ := types.SetValueFrom(ctx, types.StringType, []string{"write"})
+	attrs, _ := types.SetValueFrom(ctx, types.StringType, []string{"userCertificate"})
+	memberOf, _ := types.SetValueFrom(ctx, types.StringType, []string{"admins"})
+
+	_, err := permissionFromModel(ctx, &PermissionResourceModel{
+		Name:               types.StringValue("bad"),
+		Description:        types.StringValue("bad"),
+		Rights:             rights,
+		IncludedAttributes: attrs,
+		Target:             types.StringNull(),
+		ObjectType:         types.StringNull(),
+		MemberOf:           memberOf,
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires object_type") {
+		t.Fatalf("member_of without object_type must be rejected, got %v", err)
+	}
+}
+
+func TestCreatePolicyMembershipRejectsFreeIPAFalseSuccess(t *testing.T) {
+	var failed ipa.FailedOperations
+	if err := json.Unmarshal(
+		[]byte(`{"member":{"privilege":[["VPN Certificate Management","Insufficient access"]]}}`),
+		&failed,
+	); err != nil {
+		t.Fatalf("decode failed operations: %v", err)
+	}
+
+	verifyCalled := false
+	err := createPolicyMembership(
+		"role",
+		"VPN Certificate Manager",
+		"privilege",
+		"VPN Certificate Management",
+		func() (int, ipa.FailedOperations, error) {
+			return 0, failed, nil
+		},
+		func() (bool, error) {
+			verifyCalled = true
+			return false, nil
+		},
+	)
+	if err == nil {
+		t.Fatal("completed=0 membership mutation must not be reported as success")
+	}
+	if verifyCalled {
+		t.Fatal("read-back must not run after FreeIPA reports a failed/no-op create mutation")
+	}
+	for _, want := range []string{"completed 0", "VPN Certificate Management", "Insufficient access"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("false-success error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestCreatePolicyMembershipRequiresReadBackPostcondition(t *testing.T) {
+	err := createPolicyMembership(
+		"role",
+		"VPN Certificate Manager",
+		"privilege",
+		"VPN Certificate Management",
+		func() (int, ipa.FailedOperations, error) {
+			return 1, nil, nil
+		},
+		func() (bool, error) {
+			return false, nil
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "membership is absent on read-back") {
+		t.Fatalf("missing read-back postcondition must fail, got %v", err)
+	}
+}
+
+func TestCreatePolicyMembershipAcceptsVerifiedMutation(t *testing.T) {
+	err := createPolicyMembership(
+		"role",
+		"VPN Certificate Manager",
+		"service",
+		"VPN/pizol.host.biptec.net",
+		func() (int, ipa.FailedOperations, error) {
+			return 1, nil, nil
+		},
+		func() (bool, error) {
+			return true, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("verified membership mutation must succeed: %v", err)
+	}
+}
+
+func TestDeletePolicyMembershipRequiresAbsenceOnReadBack(t *testing.T) {
+	err := deletePolicyMembership(
+		"role",
+		"VPN Certificate Manager",
+		"host",
+		"pizol.host.biptec.net",
+		func() error { return nil },
+		func() (bool, error) { return true, nil },
+	)
+	if err == nil || !strings.Contains(err.Error(), "still a member") {
+		t.Fatalf("delete must fail while membership remains, got %v", err)
 	}
 }
 
@@ -310,6 +484,13 @@ func TestRawCompatibilityClientDecodesFreeIPA413Responses(t *testing.T) {
 		switch method {
 		case "permission_show":
 			sawPermission = true
+			if len(params) != 2 {
+				t.Fatalf("unexpected params length: %d", len(params))
+			}
+			kwargs, _ := params[1].(map[string]any)
+			if raw, ok := kwargs["raw"].(bool); !ok || raw {
+				t.Fatalf("permission_show must keep virtual targeting enabled, got raw=%#v", kwargs["raw"])
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"error": nil,
 				"result": map[string]any{
