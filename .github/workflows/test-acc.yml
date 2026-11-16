@@ -25,17 +25,14 @@ jobs:
           go-version: "1.25.11"
       - name: Run unit tests
         run: go test -count=1 ./...
-      - name: Run patched gokrb5 test suite
-        working-directory: third_party/gokrb5
-        run: go test -count=1 ./...
-      - name: Run patched gokrb5 client race tests
-        working-directory: third_party/gokrb5
-        run: go test -race -count=1 ./client
+      - name: Run Biptec gokrb5 module tests
+        run: go test -count=1 github.com/jcmturner/gokrb5/v8/...
+      - name: Run Biptec gokrb5 client race tests
+        run: go test -race -count=1 github.com/jcmturner/gokrb5/v8/client
       - name: Vet provider
         run: go vet ./...
-      - name: Vet patched gokrb5
-        working-directory: third_party/gokrb5
-        run: go vet ./...
+      - name: Vet Biptec gokrb5 fork
+        run: go vet github.com/jcmturner/gokrb5/v8/...
 
   acceptance-shard:
     name: Acceptance shard (${{ matrix.name }})
