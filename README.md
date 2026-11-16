@@ -74,6 +74,18 @@ password and Kerberos credentials are present, Kerberos takes precedence. A
 Kerberos failure is returned as an error and never falls back silently to the
 password mode.
 
+Kerberos transport is dual-stack. For every configured KDC hostname, the provider
+resolves both A and AAAA records. KDC lookups run concurrently within a one-second
+resolution window, so a stalled lookup for one KDC does not block another KDC
+whose addresses have already resolved. Configured KDC preference order is
+preserved among the resolved candidates. The provider attempts those addresses
+with a 250 ms maximum stagger, capped to a one-second total fallback window. UDP
+and TCP each share one five-second deadline across DNS resolution, all resolved
+addresses and configured KDC alternatives; a failed or unreachable family does
+not impose a separate five-second wait before the other family is tried. When
+Kerberos requires a UDP-to-TCP protocol fallback, that TCP phase has its own
+bounded deadline.
+
 Treat keytabs as secrets. Keep them outside the repository, use restrictive
 permissions such as `0600`, and inject them through the runner's secret store.
 The provider does not log password or keytab contents.

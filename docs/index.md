@@ -50,6 +50,18 @@ The existing username/password mode remains supported. Kerberos/keytab authentic
 
 If any Kerberos setting is configured, Kerberos takes precedence over username/password. Authentication errors in Kerberos mode are returned to the caller and never trigger a silent password fallback. Keytabs are secrets and should normally be mode `0600` and supplied by a secret store.
 
+Kerberos transport is dual-stack. For every configured KDC hostname, the provider
+resolves both A and AAAA records. KDC lookups run concurrently within a one-second
+resolution window, so a stalled lookup for one KDC does not block another KDC
+whose addresses have already resolved. Configured KDC preference order is
+preserved among the resolved candidates. The provider attempts those addresses
+with a 250 ms maximum stagger, capped to a one-second total fallback window. UDP
+and TCP each share one five-second deadline across DNS resolution, all resolved
+addresses and configured KDC alternatives; a failed or unreachable family does
+not impose a separate five-second wait before the other family is tried. When
+Kerberos requires a UDP-to-TCP protocol fallback, that TCP phase has its own
+bounded deadline.
+
 FreeIPA uses constrained delegation from its HTTP service to LDAP. The provider credentials therefore need a forwardable TGT; configure `forwardable = true` in `krb5.conf` or an equivalent Kerberos policy.
 
 ## Write-only enrollment passwords

@@ -71,3 +71,5 @@ require (
 	google.golang.org/grpc v1.80.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
+
+replace github.com/jcmturner/gokrb5/v8 => github.com/biptec/gokrb5/v8 v8.4.5-0.20261116120518-e439ed1ee7a5
